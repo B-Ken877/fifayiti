@@ -1,0 +1,461 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-manrope), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: var(--font-archivo), var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* FIFAYITI Brand Tokens (canonical) */
+  --color-fifayiti-green: #116B3A;
+  --color-fifayiti-deep: #084C2A;
+  --color-fifayiti-dark: #053319;
+  --color-fifayiti-yellow: #F4C400;
+  --color-fifayiti-yellow-soft: #FFE89C;
+  --color-fifayiti-offwhite: #F4F7F3;
+  --color-fifayiti-text-dark: #101828;
+  --color-fifayiti-text-gray: #667085;
+  --color-fifayiti-border: #D0D5DD;
+  --color-fifayiti-success: #12B76A;
+  --color-fifayiti-warning: #F4C400;
+  --color-fifayiti-danger: #D92D20;
+  --color-fifayiti-info: #2E90FA;
+  --color-fifayiti-line: rgba(255, 255, 255, 0.10);
+  --color-fifayiti-line-dark: rgba(8, 76, 42, 0.10);
+}
+
+:root {
+  /* ───────── PUBLIC surface ─────────
+   * WHITE primary surface, GREEN strategic environment, YELLOW action accents.
+   * Sections swap to green for brand presence; white panels hold readable content.
+   */
+  --background: #FFFFFF;
+  --foreground: #101828;
+  --card: #FFFFFF;
+  --card-foreground: #101828;
+  --popover: #FFFFFF;
+  --popover-foreground: #101828;
+  --primary: #116B3A;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F4F7F3;
+  --secondary-foreground: #084C2A;
+  --muted: #F4F7F3;
+  --muted-foreground: #667085;
+  --accent: #F4C400;
+  --accent-foreground: #084C2A;
+  --destructive: #D92D20;
+  --border: #D0D5DD;
+  --input: #D0D5DD;
+  --ring: #116B3A;
+  --chart-1: #116B3A;
+  --chart-2: #F4C400;
+  --chart-3: #084C2A;
+  --chart-4: #667085;
+  --chart-5: #D92D20;
+
+  /* Admin sidebar */
+  --sidebar: #084C2A;
+  --sidebar-foreground: #FFFFFF;
+  --sidebar-primary: #F4C400;
+  --sidebar-primary-foreground: #084C2A;
+  --sidebar-accent: #116B3A;
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: rgba(255, 255, 255, 0.10);
+  --sidebar-ring: #F4C400;
+}
+
+/* ───────── ADMIN workspace ───────── */
+.admin-workspace {
+  --background: #F4F7F3;
+  --foreground: #101828;
+  --card: #FFFFFF;
+  --card-foreground: #101828;
+  --popover: #FFFFFF;
+  --popover-foreground: #101828;
+  --primary: #116B3A;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F4F7F3;
+  --secondary-foreground: #084C2A;
+  --muted: #F4F7F3;
+  --muted-foreground: #667085;
+  --accent: #F4C400;
+  --accent-foreground: #084C2A;
+  --destructive: #D92D20;
+  --border: #D0D5DD;
+  --input: #D0D5DD;
+  --ring: #116B3A;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  *:focus-visible {
+    outline: 2px solid #F4C400;
+    outline-offset: 2px;
+  }
+  html, body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    font-feature-settings: "ss01", "cv11", "tnum";
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #D0D5DD; border-radius: 6px; }
+  ::-webkit-scrollbar-thumb:hover { background: #98A2B3; }
+
+  /* Reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* ═════ COLOR UTILITIES ═════ */
+  .text-fifayiti-green { color: #116B3A; }
+  .text-fifayiti-deep { color: #084C2A; }
+  .text-fifayiti-dark { color: #053319; }
+  .text-fifayiti-yellow { color: #F4C400; }
+  .text-fifayiti-offwhite { color: #F4F7F3; }
+  .text-fifayiti-text-dark { color: #101828; }
+  .text-fifayiti-text-gray { color: #667085; }
+  .text-fifayiti-border { color: #D0D5DD; }
+  .text-fifayiti-success { color: #12B76A; }
+  .text-fifayiti-danger { color: #D92D20; }
+  .text-fifayiti-info { color: #2E90FA; }
+
+  .bg-fifayiti-green { background-color: #116B3A; }
+  .bg-fifayiti-deep { background-color: #084C2A; }
+  .bg-fifayiti-dark { background-color: #053319; }
+  .bg-fifayiti-yellow { background-color: #F4C400; }
+  .bg-fifayiti-offwhite { background-color: #F4F7F3; }
+  .bg-fifayiti-text-dark { background-color: #101828; }
+  .bg-fifayiti-success { background-color: #12B76A; }
+  .bg-fifayiti-danger { background-color: #D92D20; }
+
+  .border-fifayiti-green { border-color: #116B3A; }
+  .border-fifayiti-yellow { border-color: #F4C400; }
+  .border-fifayiti-border { border-color: #D0D5DD; }
+  .border-fifayiti-line { border-color: rgba(255, 255, 255, 0.10); }
+  .border-fifayiti-line-dark { border-color: rgba(8, 76, 42, 0.10); }
+
+  /* ═════ TYPOGRAPHY TOKENS ═════
+   * Display uses Archivo (athletic/professional). Body uses Manrope.
+   */
+  /* DISPLAY — Archivo, ExtraBold/Black, tight tracking */
+  .display-xl {
+    font-family: var(--font-archivo), var(--font-manrope), sans-serif;
+    font-weight: 900;
+    font-size: clamp(3rem, 6.5vw, 5.5rem);
+    line-height: 0.95;
+    letter-spacing: -0.035em;
+    text-transform: uppercase;
+  }
+  .display-lg {
+    font-family: var(--font-archivo), var(--font-manrope), sans-serif;
+    font-weight: 900;
+    font-size: clamp(2.5rem, 5vw, 4rem);
+    line-height: 0.98;
+    letter-spacing: -0.03em;
+    text-transform: uppercase;
+  }
+  .display-md {
+    font-family: var(--font-archivo), var(--font-manrope), sans-serif;
+    font-weight: 800;
+    font-size: clamp(2rem, 3.5vw, 2.75rem);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+  }
+  /* HEADING — Archivo for titles, Bold/ExtraBold */
+  .heading-xl {
+    font-family: var(--font-archivo), var(--font-manrope), sans-serif;
+    font-weight: 800;
+    font-size: clamp(1.75rem, 2.8vw, 2.25rem);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+  .heading-lg {
+    font-family: var(--font-archivo), var(--font-manrope), sans-serif;
+    font-weight: 700;
+    font-size: clamp(1.5rem, 2vw, 1.875rem);
+    line-height: 1.15;
+    letter-spacing: -0.015em;
+  }
+  .heading-md {
+    font-family: var(--font-archivo), var(--font-manrope), sans-serif;
+    font-weight: 700;
+    font-size: 1.25rem;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+  }
+  /* BODY — Manrope, Regular/Medium */
+  .body-lg {
+    font-weight: 400;
+    font-size: 1.125rem;
+    line-height: 1.55;
+  }
+  .body-md {
+    font-weight: 400;
+    font-size: 1rem;
+    line-height: 1.55;
+  }
+  .body-sm {
+    font-weight: 500;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+  /* META — Manrope, Medium, small */
+  .meta {
+    font-weight: 500;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    letter-spacing: 0.01em;
+  }
+  .eyebrow {
+    font-family: var(--font-manrope), sans-serif;
+    font-weight: 700;
+    font-size: 0.6875rem;
+    line-height: 1;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  /* SCORE — Archivo Black, tabular numerals, huge */
+  .score {
+    font-family: var(--font-archivo), var(--font-manrope), sans-serif;
+    font-weight: 900;
+    font-variant-numeric: tabular-nums lining-nums;
+    font-feature-settings: "tnum" 1, "lnum" 1;
+    letter-spacing: -0.04em;
+    line-height: 0.9;
+  }
+
+  /* Tabular numerals — mandatory for stats/standings/clock */
+  .tnum {
+    font-variant-numeric: tabular-nums lining-nums;
+    font-feature-settings: "tnum" 1, "lnum" 1;
+  }
+
+  /* ═════ SPACING SCALE ═════
+   * 4 8 12 16 20 24 32 40 48 64 80 96 120
+   */
+
+  /* ═════ BUTTONS ═════ */
+  .btn-primary {
+    background: #116B3A;
+    color: #FFFFFF;
+    font-weight: 700;
+    font-size: 0.875rem;
+    border-radius: 8px;
+    padding: 0 1.25rem;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    transition: filter 0.15s ease;
+  }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-primary:active { filter: brightness(0.95); }
+
+  .btn-featured {
+    background: #F4C400;
+    color: #084C2A;
+    font-weight: 700;
+    font-size: 0.875rem;
+    border-radius: 8px;
+    padding: 0 1.25rem;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    transition: filter 0.15s ease;
+  }
+  .btn-featured:hover { filter: brightness(1.05); }
+  .btn-featured:active { filter: brightness(0.95); }
+
+  .btn-secondary {
+    background: transparent;
+    color: #084C2A;
+    border: 1.5px solid #116B3A;
+    font-weight: 700;
+    font-size: 0.875rem;
+    border-radius: 8px;
+    padding: 0 1.25rem;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .btn-secondary:hover { background: #116B3A; color: #FFFFFF; }
+
+  /* On dark/green backgrounds — white border, hover yellow */
+  .btn-on-green {
+    background: transparent;
+    color: #FFFFFF;
+    border: 1.5px solid rgba(255, 255, 255, 0.35);
+    font-weight: 700;
+    font-size: 0.875rem;
+    border-radius: 8px;
+    padding: 0 1.25rem;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    transition: border-color 0.15s ease, color 0.15s ease;
+  }
+  .btn-on-green:hover { border-color: #F4C400; color: #F4C400; }
+
+  .btn-danger {
+    background: #D92D20;
+    color: #FFFFFF;
+    font-weight: 700;
+    font-size: 0.875rem;
+    border-radius: 8px;
+    padding: 0 1.25rem;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    transition: filter 0.15s ease;
+  }
+  .btn-danger:hover { filter: brightness(1.08); }
+
+  /* ═════ SURFACES ═════ */
+  .fifayiti-card {
+    background: #FFFFFF;
+    border: 1px solid #D0D5DD;
+    border-radius: 12px;
+  }
+  .fifayiti-card-dark {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 12px;
+  }
+
+  /* ═════ PITCH TEXTURE ═════
+   * Abstract football visual — not stock photo. Used on green hero/sections.
+   */
+  .bg-pitch-texture {
+    background-color: #084C2A;
+    background-image:
+      linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0) 50%, rgba(0,0,0,0.06) 100%),
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 100% 100%, 96px 96px, 96px 96px;
+  }
+  .bg-pitch-texture-dark {
+    background-color: #053319;
+    background-image:
+      linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0) 50%, rgba(0,0,0,0.10) 100%),
+      linear-gradient(rgba(255,255,255,0.022) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.022) 1px, transparent 1px);
+    background-size: 100% 100%, 96px 96px, 96px 96px;
+  }
+  .bg-pitch-texture-light {
+    background-color: #F4F7F3;
+    background-image:
+      linear-gradient(rgba(17,107,58,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(17,107,58,0.035) 1px, transparent 1px);
+    background-size: 96px 96px;
+  }
+
+  /* ═════ LIVE PULSE ═════ */
+  .live-pulse { position: relative; }
+  .live-pulse::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: currentColor;
+    opacity: 0.55;
+    animation: live-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }
+  @keyframes live-ping {
+    0% { transform: scale(1); opacity: 0.55; }
+    75%, 100% { transform: scale(2.6); opacity: 0; }
+  }
+
+  /* ═════ UTILITIES ═════ */
+  .text-balance { text-wrap: balance; }
+  .text-pretty { text-wrap: pretty; }
+
+  /* Section divider — green/gold */
+  .gold-divider {
+    height: 4px;
+    background: linear-gradient(90deg, #F4C400 0%, #F4C400 40px, transparent 40px);
+  }
+
+  /* ═════ FORM INPUT ═════ */
+  .input {
+    width: 100%;
+    padding: 0.625rem 0.75rem;
+    border-radius: 10px;
+    border: 1px solid #E4E7EC;
+    background: #FFFFFF;
+    color: #101828;
+    font-family: var(--font-manrope), sans-serif;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    min-height: 44px;
+  }
+  .input:focus {
+    border-color: #116B3A;
+    box-shadow: 0 0 0 3px rgba(17, 107, 58, 0.12);
+  }
+  .input::placeholder { color: #98A2B3; }
+}

@@ -1,0 +1,306 @@
+// FIFAYITI domain model — with Competition + Group + Knockout support.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ───────── Auth ─────────
+
+model User {
+  id           String         @id @default(cuid())
+  email        String         @unique
+  name         String?
+  passwordHash String
+  role         AdminRole      @default(LIVE_OPERATOR)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  verifiedPlayers Player[]     @relation("PlayerVerifiedBy")
+  recordedEvents  MatchEvent[]
+}
+
+enum AdminRole {
+  PRESIDENT
+  DIRECTOR
+  LIVE_OPERATOR
+  TEAM_ADMIN
+}
+
+// ───────── Competition ─────────
+// Modeled after FIFA World Cup + UEFA Champions League patterns.
+//   - World Cup 2022 (32 teams, 8 groups of 4, top 2 advance → R16, QF, SF, Final + 3rd place)
+//   - World Cup 2026 (48 teams, 12 groups of 4, top 2 + 8 best thirds → R32, R16, QF, SF, Final + 3rd)
+//   - Champions League (32 teams, 8 groups of 4, double round-robin → R16, QF, SF, Final — no 3rd)
+// Federation tool: president chooses group_count, teams_per_group, qualifiers_per_group,
+// has_third_place_match, rr_type (single or double round-robin).
+
+model Competition {
+  id            String            @id @default(cuid())
+  name          String                                       // e.g. "FIFAYITI Koup 2026" — entered by President
+  slug          String            @unique
+  season        String            @default("2026")
+  status        CompetitionStatus @default(DRAFT)
+  format        CompetitionFormat @default(GROUPS_THEN_KNOCKOUT)
+  rrType        RoundRobinType    @default(SINGLE)          // single or double round-robin in group stage
+  groupCount    Int               @default(2)
+  teamsPerGroup Int               @default(4)
+  qualifiersPerGroup Int          @default(2)
+  hasThirdPlaceMatch Boolean      @default(false)
+  hasKnockoutPhase Boolean        @default(true)
+  startDate     DateTime?
+  endDate       DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  groups        Group[]
+  matches       Match[]
+  registrations TeamRegistration[]
+}
+
+enum CompetitionStatus {
+  DRAFT
+  OPEN                       // teams can register / be assigned
+  IN_PROGRESS                // matches are being played
+  COMPLETED                  // tournament finished
+  ARCHIVED
+}
+
+enum CompetitionFormat {
+  GROUPS_THEN_KNOCKOUT       // WC / UCL pattern
+  GROUPS_ONLY                // league style — no KO
+  KNOCKOUT_ONLY              // single-elimination bracket
+}
+
+enum RoundRobinType {
+  SINGLE                     // each pair plays once
+  DOUBLE                     // each pair plays twice (home & away) — UCL pattern
+}
+
+model Group {
+  id            String       @id @default(cuid())
+  competitionId String
+  competition   Competition  @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  name          String                                     // "A", "B", "C", ...
+  createdAt     DateTime     @default(now())
+
+  teams       TeamRegistration[]
+  matches     Match[]
+}
+
+model TeamRegistration {
+  id            String       @id @default(cuid())
+  teamId        String
+  team          Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  competitionId String
+  competition   Competition  @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  groupId       String?
+  group         Group?       @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  seedNumber    Int          @default(0)                    // for bracket seeding
+  createdAt     DateTime     @default(now())
+
+  @@unique([teamId, competitionId])
+}
+
+// ───────── Teams ─────────
+
+model Team {
+  id            String         @id @default(cuid())
+  name          String
+  shortName     String
+  primaryColor   String         @default("#116B3A")
+  secondaryColor String        @default("#F4C400")
+  founded        String?
+  homeVenue      String?
+  venueAddress   String?
+  venueRouter    String?
+  venueConnectivity VenueConnectivity @default(MOYEN)
+  logoUrl        String?
+  photoUrl       String?
+  status        TeamStatus     @default(PRE_KREYE)
+  registeredAt  String?
+  group         String         @default("A")
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  players       Player[]
+  homeMatches   Match[]        @relation("HomeTeam")
+  awayMatches   Match[]        @relation("AwayTeam")
+  events        MatchEvent[]
+  replays       Replay[]
+  registrations TeamRegistration[]
+}
+
+enum TeamStatus {
+  PRE_KREYE
+  ENSKRIPSYON_OUVE
+  SOUMET
+  AN_VERIFIKASYON
+  VERIFYE
+  AKTIF
+}
+
+enum VenueConnectivity {
+  BON
+  MOYEN
+  FEBL
+}
+
+// ───────── Players ─────────
+
+model Player {
+  id           String         @id @default(cuid())
+  teamId       String
+  team         Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  firstName    String
+  lastName     String
+  jerseyNumber Int
+  position     PlayerPosition
+  dateOfBirth  String?
+  idNumber     String?
+  photoUrl     String?
+  status       PlayerStatus   @default(AN_ATANT)
+  submittedAt  String?
+  verifiedAt   DateTime?
+  verifiedById String?
+  verifiedBy   User?          @relation("PlayerVerifiedBy", fields: [verifiedById], references: [id])
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  eventsIn   MatchEvent[]       @relation("PlayerInEvent")
+  eventsOut  MatchEvent[]       @relation("PlayerOutEvent")
+  replays    Replay[]
+
+  @@unique([teamId, jerseyNumber])
+}
+
+enum PlayerPosition {
+  GK
+  DEF
+  MID
+  FWD
+}
+
+enum PlayerStatus {
+  AN_ATANT
+  VERIFYE
+  REFIZE
+  DEMANDE_KOREKSYON
+}
+
+// ───────── Matches + Events ─────────
+// Match now belongs to a Competition (optional) and may belong to a Group (group stage)
+// or carry a bracketSlot (knockout stage: "R16-1", "QF-1", "SF-1", "FIN", "3RD").
+
+model Match {
+  id            String        @id @default(cuid())
+  competitionId String?
+  competition   Competition?  @relation(fields: [competitionId], references: [id])
+  matchday      Int           @default(1)
+  stage         StageKind     @default(GROUP)
+  groupId       String?
+  group         Group?        @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  groupLabel    String?                                          // "A" | "B" — denormalized
+  bracketSlot   String?                                           // "R16-1" | "QF-1" | "SF-1" | "FIN" | "3RD"
+  homeTeamId    String
+  homeTeam      Team         @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeamId    String
+  awayTeam      Team         @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  homeScore     Int          @default(0)
+  awayScore     Int          @default(0)
+  kickoff       DateTime     @default(now())
+  venue         String?
+  competitionName String     @default("FIFAYITI")                                  // denormalized competition name for display
+  status        MatchStatus  @default(PWOGRAM)
+  referee       String?
+  commissioner  String?
+  clock         Int          @default(0)
+  half          String       @default("PRE")
+  synced        Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  events  MatchEvent[]
+  replays Replay[]
+}
+
+enum StageKind {
+  GROUP
+  R32
+  R16
+  QF
+  SF
+  FIN
+  THIRD_PLACE
+}
+
+enum MatchStatus {
+  PWOGRAM
+  AN_DIRÈK
+  FINI
+  AN_ATANT_APWOVASYON
+  REPORETE
+}
+
+model MatchEvent {
+  id            String         @id @default(cuid())
+  matchId       String
+  match         Match          @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  minute        Int
+  half          Int            @default(1)
+  kind          MatchEventKind
+  teamId        String?
+  team          Team?          @relation(fields: [teamId], references: [id])
+  playerInId    String?
+  playerIn      Player?        @relation("PlayerInEvent", fields: [playerInId], references: [id])
+  playerOutId   String?
+  playerOut     Player?        @relation("PlayerOutEvent", fields: [playerOutId], references: [id])
+  description   String
+  recordedById  String?
+  recordedBy    User?          @relation(fields: [recordedById], references: [id])
+  recordedAt    DateTime       @default(now())
+  correctedFrom String?
+  correctionNote String?
+  createdAt     DateTime       @default(now())
+}
+
+enum MatchEventKind {
+  GOL
+  KAT_JON
+  KAT_WOUJ
+  RANPLASMAN
+  KOMANSE
+  MWATYE_TAN
+  DEZYEM_MITAN
+  FEN_MATCH
+}
+
+// ───────── Replays ─────────
+
+model Replay {
+  id         String      @id @default(cuid())
+  matchId    String
+  match      Match       @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  title      String
+  playerId   String?
+  player     Player?     @relation(fields: [playerId], references: [id])
+  teamId     String?
+  team       Team?       @relation(fields: [teamId], references: [id])
+  kind       ReplayKind
+  minute     Int
+  savedAt    DateTime    @default(now())
+  thumbnail  String
+  permanent  Boolean     @default(true)
+}
+
+enum ReplayKind {
+  GOL
+  SAV
+  KADON
+  SUBSTITUSYON
+  KAT
+}
