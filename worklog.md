@@ -451,3 +451,29 @@ Changes in src/components/fifayiti/public/home-page.tsx:
 - Scorebug: crest 20->14, team names text-xs->text-[10px], score text-lg->text-sm, clock text-[9px], tighter paddings, bottom-2 left-2
 - Live placeholder text sizes reduced (text-xs / text-[10px])
 Build clean, pm2 restarted, verified 200 local + tunnel; new classes confirmed in chunks.
+
+---
+Task ID: 8
+Agent: Super Z (main agent)
+Task: Push all fixes to the GitHub repo
+
+Work Log:
+- Confirmed /var/www/fifayiti was not a git repo (deployed directly via SFTP across all prior tasks)
+- Found existing remote repo `git@github.com:B-Ken877/fifayiti.git` (single "Initial commit" 56c8625); VPS already has working SSH key auth to GitHub (verified via `ssh -T git@github.com` -> "Hi B-Ken877!")
+- Cloned remote into /tmp/fifayiti-remote to inspect: 1 commit, 95 source files, .gitignore already excludes node_modules/.next/db/.env/ecosystem.config.js
+- Diffed local source vs remote HEAD: 18 modified files (all src/ fixes from tasks 1-7) + 14 new files (livekit-room, livekit-token, stream/health, upload, operator/{control,camera/[slot]}, bracket/advance, navigation-history, scorebug, worklog.md, ws-server/{server.js,package.json,package-lock.json}, bun.lock, public/{shield-crest.png,tv-bg.jpeg})
+- Verified repo is PRIVATE (HTTPS anonymous GET returns 404) so it's safe to push source including the hardcoded LiveKit API key/secret that are already deployed in production
+- Moved .git from clone into /var/www/fifayiti so git operates against /var/www/fifayiti working tree
+- Set per-repo git user (FIFAYITI Admin / admin@fifayiti.medikahaiti.site) + global safe.directory exception for /var/www/fifayiti
+- Restored .gitignore + README.md from clone (they showed as deleted after .git move)
+- Added `backups/` and `db/broadcast-state.json` to .gitignore (backups/ had 174 untracked files from per-deploy snapshots, would have polluted the commit)
+- Sanity-checked: no node_modules/.env/.next/db/backups accidentally staged (0 false positives)
+- Scanned src/ for secrets; only the LiveKit credentials match (already in production, repo is private, noted as TODO for env-var refactor)
+- Committed 34 files (6,422 insertions / 1,166 deletions) as commit 9a63645 with comprehensive multi-section message covering all 7 prior tasks
+- Pushed to origin/main: 56c8625..9a63645 main -> main (rc 0)
+- Verified: local HEAD 9a6364564f1365abd53076343f0abc357dea9adb == remote HEAD 9a6364564f1365abd53076343f0abc357dea9adb
+
+Stage Summary:
+- Pushed all fixes from this session to GitHub at github.com/B-Ken877/fifayiti (private repo)
+- New commit 9a63645 sits on top of initial commit 56c8625 on `main` branch
+- Worklog.md now in repo root for full traceability of every fix
