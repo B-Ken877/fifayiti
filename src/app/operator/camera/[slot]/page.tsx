@@ -48,27 +48,7 @@ export default function CameraPage() {
     ? { w: 1920, h: 1080, bitrate: 6_000_000, label: "1080p HD" }
     : { w: 1280, h: 720, bitrate: 3_000_000, label: "720p Fluit" };
 
-  // ── Quality selector ─────────────────────────────────────
-  // User feedback (2026-08-24 field test): WebRTC is far more fluid than
-  // RTMP on Haitian mobile networks — so the BROWSER broadcast is the
-  // primary path, and the bitrate must fit mobile upload capacity.
-  //   fluid (default) — 720p @ 3 Mbps: holds up on Natcom/Digicel data
-  //   hd              — 1080p @ 6 Mbps: for Wi-Fi / fiber only
-  const [quality, setQuality] = useState<"fluid" | "hd">("fluid");
-  const QUALITY = quality === "hd"
-    ? { w: 1920, h: 1080, bitrate: 6_000_000, label: "1080p HD" }
-    : { w: 1280, h: 720, bitrate: 3_000_000, label: "720p Fluit" };
 
-  // ── Quality selector ──────────────────────────────────────────────
-  // User feedback (2026-08-24 field test): WebRTC is far more fluid than
-  // RTMP on Haitian mobile networks — so the BROWSER broadcast is the
-  // primary path, and the bitrate must fit mobile upload capacity.
-  //   fluid (default) — 720p @ 3 Mbps: holds up on Natcom/Digicel data
-  //   hd              — 1080p @ 6 Mbps: for Wi-Fi / fiber only
-  const [quality, setQuality] = useState<"fluid" | "hd">("fluid");
-  const QUALITY = quality === "hd"
-    ? { w: 1920, h: 1080, bitrate: 6_000_000, label: "1080p HD" }
-    : { w: 1280, h: 720, bitrate: 3_000_000, label: "720p Fluit" };
 
   // Pull the trusted role from /api/auth/me so we can greet the
   // cameraman by their account name (cameraman1 / cameraman2 / cameraman3
