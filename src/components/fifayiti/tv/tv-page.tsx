@@ -84,7 +84,7 @@ export function TvPage() {
       try {
         const tokenRes = await fetch("/api/livekit-token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roomName: ROOM_NAME, participantName: `viewer-${Date.now()}`, role: "viewer" }) });
         if (!tokenRes.ok) return; const { token, wsUrl } = await tokenRes.json();
-        const room = new Room({ adaptiveStream: true, autoSubscribe: true });
+        const room = new Room({ adaptiveStream: true, autoSubscribe: false });
         roomRef.current = room;
         room.on(RoomEvent.Connected, () => { if (!cancelled) { setConnected(true); room.localParticipant.setMetadata(JSON.stringify({ role: "viewer" })); }});
         room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => { if (cancelled || track.kind !== Track.Kind.Video) return; try { const meta = JSON.parse(participant.metadata || "{}"); if (meta.slot && meta.slot === selectedSlotRef.current) attachTrack(track); } catch {} });
@@ -111,6 +111,17 @@ export function TvPage() {
       }
       currentTrackRef.current = null;
       setHasVideo(false);
+      // Broadcast off → stop downloading ANY camera video
+      const room = roomRef.current;
+      if (room) {
+        for (const p of room.remoteParticipants.values()) {
+          for (const pub of p.trackPublications.values()) {
+            if (pub.kind === Track.Kind.Video && pub.isSubscribed) {
+              try { pub.setSubscribed(false); } catch {}
+            }
+          }
+        }
+      }
       return;
     }
     scanForSelected();
@@ -122,16 +133,30 @@ export function TvPage() {
     if (videoRef.current) { track.attach(videoRef.current); setHasVideo(true); }
   };
 
-  // Attach ONLY the operator-selected camera's video (polls room metadata)
+  // Attach ONLY the operator-selected camera's video (polls room metadata).
+  // Bandwidth-critical: with autoSubscribe:false we subscribe ONLY the
+  // selected camera's video track and actively UNSUBSCRIBE every other
+  // video track (other cameras + never-played audio). Viewers on weak
+  // Haitian mobile data previously downloaded ALL 3 camera feeds — the
+  // #1 cause of "heavily delayed and slow" TV playback.
   const scanForSelected = () => {
     const room = roomRef.current;
     if (!room) return;
     for (const p of room.remoteParticipants.values()) {
       try {
         const meta = JSON.parse(p.metadata || "{}");
-        if (meta.slot && meta.slot === selectedSlotRef.current) {
-          for (const pub of p.trackPublications.values()) {
+        const isSelected = !!meta.slot && meta.slot === selectedSlotRef.current;
+        for (const pub of p.trackPublications.values()) {
+          if (pub.kind !== Track.Kind.Video) continue;
+          if (isSelected) {
             if (!pub.isSubscribed) pub.setSubscribed(true);
+          } else if (pub.isSubscribed) {
+            // camera not on air → stop downloading its video entirely
+            try { pub.setSubscribed(false); } catch {}
+          }
+        }
+        if (isSelected) {
+          for (const pub of p.trackPublications.values()) {
             if (pub.track && pub.track.kind === Track.Kind.Video) { attachTrack(pub.track); return; }
           }
         }

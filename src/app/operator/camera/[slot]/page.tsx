@@ -491,8 +491,9 @@ export default function CameraPage() {
                       <li>Tape <strong>Name</strong>, <strong>URL</strong> ak <strong>Stream Key</strong> ki gen la a (itilize bouton kopye a)</li>
                       <li>Nan <strong>Settings → Video</strong>:
                         <ul className="ml-5 mt-1 list-disc text-white/70">
-                          <li>Rezolisyon: <strong>1080p</strong> (oswa <strong>720p</strong> si entènèt la fèb)</li>
-                          <li>Bitrate: <strong>4500–6000 Kbps</strong> si ou ka chanje li, oswa <strong>Auto</strong></li>
+                          <li>Rezolisyon: <strong>720p</strong> (1080p sèlman si ou sou Wi-Fi/fib solid)</li>
+                          <li>Bitrate: <strong>2500–3000 Kbps</strong> sou done mobil (Natcom/Digicel). 4500–6000 sèlman sou Wi-Fi/fib.
+                            <br /><span className="text-white/50">⚠ Bitrate twò wo pou rezo a = reta k ap grandi san aret (buffering). Meye pi ba pase twò wo.</span></li>
                         </ul>
                       </li>
                       <li>Klike <strong>Go Live</strong> anvan match la kòmanse. Videyo a ap parèt sou FIFAYITI TV — operatè a chwazi kamera ou menm jan toujou.</li>
@@ -504,7 +505,7 @@ export default function CameraPage() {
                       <strong className="text-[#F4C400]">Enpòtan:</strong> Pa kòmanse Streamlabs ak paj kamera navigatè a (oswa OBS) an menm tan. Yon sèl kamera pa slot. Si paj kamera a ap pibliye, klike <strong>Kanpe retransmisyon</strong> anvan ou klike Go Live nan Streamlabs.
                     </p>
                     <p className="body-sm text-white/60">
-                      Note: RTMP ajoute apeprè 2–5 segond reta — se nòmal. Si Network Boost mande abònman Ultra, ou ka difize san li tou.
+                      Note: RTMP gen 3–8 segond reta — se nòmal. Si reta a kòmanse grandi san aret, bese bitrate a nan Streamlabs (Settings → Video). Si Network Boost mande abònman Ultra, ou ka difize san li tou.
                     </p>
                   </div>
                 </div>

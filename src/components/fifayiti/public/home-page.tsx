@@ -165,15 +165,28 @@ export function HomePage() {
     currentTrackRef.current = track;
     if (videoRef.current) { track.attach(videoRef.current); setHasVideo(true); }
   };
+  // Attach ONLY the operator-selected camera's video to the hero player.
+  // Bandwidth-critical: with autoSubscribe:false we subscribe ONLY the
+  // selected camera's video track and actively UNSUBSCRIBE every other
+  // video track — viewers on weak Haitian mobile data must never download
+  // all 3 camera feeds at once.
   const scanForSelected = () => {
     const room = roomRef.current;
     if (!room) return;
     for (const p of room.remoteParticipants.values()) {
       try {
         const meta = JSON.parse(p.metadata || "{}");
-        if (meta.slot && meta.slot === selectedSlotRef.current) {
-          for (const pub of p.trackPublications.values()) {
+        const isSelected = !!meta.slot && meta.slot === selectedSlotRef.current;
+        for (const pub of p.trackPublications.values()) {
+          if (pub.kind !== Track.Kind.Video) continue;
+          if (isSelected) {
             if (!pub.isSubscribed) pub.setSubscribed(true);
+          } else if (pub.isSubscribed) {
+            try { pub.setSubscribed(false); } catch {}
+          }
+        }
+        if (isSelected) {
+          for (const pub of p.trackPublications.values()) {
             if (pub.track && pub.track.kind === Track.Kind.Video) { attachTrack(pub.track); return; }
           }
         }
@@ -201,7 +214,7 @@ export function HomePage() {
         });
         if (!tokenRes.ok) return;
         const { token, wsUrl } = await tokenRes.json();
-        const room = new Room({ adaptiveStream: true, autoSubscribe: true });
+        const room = new Room({ adaptiveStream: true, autoSubscribe: false });
         roomRef.current = room;
         room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
           if (cancelled || track.kind !== Track.Kind.Video) return;

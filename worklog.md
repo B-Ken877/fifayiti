@@ -755,3 +755,35 @@ Stage Summary:
 - TURN relay live on port 3479 for CGNAT cameramen (Natcom/Digicel mobile data)
 - Browser camera publishes 1080p @ 6 Mbps with 3-layer simulcast; RTMP/OBS sources are server-transcoded to 3 layers so every viewer gets adaptive quality
 
+---
+Task ID: 11
+Agent: Super Z (main agent)
+Task: live_operator could not find the camera slots — no UI entry point to the broadcast studio
+
+Work Log:
+- Root cause: the live_operator sidebar linked to admin-match-control (MatchControlPage — match events/score) but the actual broadcast desk with the 3 camera slots lives at the standalone route /operator/control — NOTHING linked to it anywhere in the UI. Only manual URL typing reached it.
+- role-shell.tsx: NavItem now supports optional href (standalone-route navigation). Added "Estidyo — Kamera sou TV" nav item (Radio icon) to LIVE_OPERATOR_PRESET (first Broadcast item) and FULL_NAV (president/director). Renamed operator's "Match" to "Match (Evènman + Skò)" to disambiguate. href items never highlight as active.
+- RoleGreetingBanner: live_operator's header button is now "Ouvri estidyo a" → /operator/control (was "Ale nan match" → match events page).
+- operator/control page: added "← Administrasyon" back link in the header.
+- Verified: build OK, bundle contains the new strings, live_operator gets 200 on /operator/control, cameraman1 is redirected to their slot, git pushed.
+
+Stage Summary:
+- Live operator now reaches the camera-slot desk two ways: sidebar "Estidyo — Kamera sou TV" and the dashboard banner button "Ouvri estidyo a".
+
+---
+Task ID: 12
+Agent: Super Z (main agent)
+Task: TV playback heavily delayed and slow — diagnose + fix
+
+Work Log:
+- Diagnosed user's real Streamlabs test (17:19/17:25/17:45, 720p from Natcom IP 216.226.76.30). CPU clean (load ~1, no stuck processes, docker stats <2% each). LiveKit logs showed: viewer RTT 460-774ms (Haiti<->Germany VPS, unstable, ICE pair switching mid-stream), TWO viewer sessions simultaneously (home + TV pages), 'resuming RTC session' reconnects, one RTMP read timeout (phone network dropped)
+- Root causes: (1) viewers used autoSubscribe:true — subscribed to ALL cameras' video+audio tracks while displaying only one; with 3 cameras that triples viewer bandwidth on weak Haitian mobile data; (2) home page AND TV page each maintain their own Room connection (double download if both open); (3) Streamlabs guidance recommended 4500-6000 Kbps — too high for Haitian mobile upload, RTMP buffer grows → ever-increasing delay; (4) inherent RTMP latency 3-8s
+- tv-page.tsx + home-page.tsx: autoSubscribe:false; scanForSelected now subscribes ONLY the selected camera's video track and actively unsubscribes all other video tracks; broadcast-off effect unsubscribes everything
+- camera-page.tsx Streamlabs panel: recommend 720p + 2500-3000 Kbps on mobile data (Natcom/Digicel), 4500-6000 only on Wi-Fi/fiber; warning that too-high bitrate = growing delay; latency note updated to 3-8s
+- Deployed, verified, git pushed
+
+Stage Summary:
+- Viewer bandwidth cut to exactly one selected camera video stream (was: all cameras + audio)
+- Streamlabs guidance tuned for Haitian mobile networks
+- Recommendation given to user: US-East VPS would cut RTT from ~460-700ms to ~80-120ms (biggest structural improvement for WebRTC quality)
+
