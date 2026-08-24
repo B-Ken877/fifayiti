@@ -34,6 +34,9 @@ export type Role =
   | "director"
   | "live_operator"
   | "cameraman"
+  | "cameraman1"
+  | "cameraman2"
+  | "cameraman3"
   | "team_admin";
 
 const ALL_PERMISSIONS: Permission[] = [
@@ -70,6 +73,11 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   cameraman: [
     "matches.view", // read-only — just needs to know which slot is "on TV"
   ],
+  // Each cameramanN is bound to slot N (enforced by middleware + login
+  // redirect). Permissions are identical to the legacy cameraman role.
+  cameraman1: ["matches.view"],
+  cameraman2: ["matches.view"],
+  cameraman3: ["matches.view"],
   team_admin: [
     "teams.view",
     "players.view",

@@ -1,17 +1,23 @@
-// Middleware — protect /operator/* routes by session cookie.
+// Middleware — protect /operator/* routes by session cookie + role/slot
+// binding.
 //
 // Sessions are HMAC-signed cookies (see src/lib/auth/session.ts).
 // We check the role here so direct URL access to /operator/camera/1
 // or /operator/control without a valid session bounces to /login.
 //
-// The middleware runs on the Edge runtime, which means Node's `crypto`
-// module is available via `crypto` global (Edge has crypto.subtle but
-// scrypt is NOT available — we only need timingSafeEqual + HMAC here,
-// both of which Node's `crypto` exposes and the Edge runtime ships).
+// The middleware runs on the Node.js runtime (NOT Edge) so we have
+// full crypto support.
 //
-// However, to be safe and avoid edge-runtime crypto quirks, we set
-// `export const runtime = "nodejs"` so the middleware runs in the
-// Node.js runtime (where crypto is fully supported).
+// Slot binding rules for cameramen:
+//   cameraman (legacy) → can access /operator/camera/1 ONLY
+//   cameraman1         → can access /operator/camera/1 ONLY
+//   cameraman2         → can access /operator/camera/2 ONLY
+//   cameraman3         → can access /operator/camera/3 ONLY
+// Other roles (president / director / live_operator) can access ANY
+// /operator/camera/N route (for oversight) and /operator/control.
+//
+// Cameramen cannot access /operator/control at all — that's the
+// broadcast desk reserved for live_operator and above.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
@@ -46,6 +52,18 @@ function verifyToken(token: string): string | null {
   }
 }
 
+function slotFromRole(role: string): number | null {
+  if (role === "cameraman" || role === "cameraman1") return 1;
+  if (role === "cameraman2") return 2;
+  if (role === "cameraman3") return 3;
+  return null;
+}
+
+function isCameramanRole(role: string): boolean {
+  return role === "cameraman" || role === "cameraman1" ||
+    role === "cameraman2" || role === "cameraman3";
+}
+
 export function middleware(req: NextRequest) {
   const cookieHeader = req.headers.get("cookie") || "";
   const cookies = Object.fromEntries(
@@ -59,22 +77,64 @@ export function middleware(req: NextRequest) {
 
   const path = req.nextUrl.pathname;
 
-  // Path → required role(s) matrix
-  let allowedRoles: string[] = [];
+  // ─── /operator/camera/[slot] ─────────────────────────────────────
+  // Cameraman roles can only reach their own slot. President /
+  // director / live_operator can reach any slot (for oversight).
   if (path.startsWith("/operator/camera")) {
-    allowedRoles = ["cameraman", "live_operator", "president", "director"];
-  } else if (path.startsWith("/operator/control")) {
-    allowedRoles = ["live_operator", "president", "director"];
-  } else {
+    const allowedForAnySlot = ["live_operator", "president", "director"];
+    const slotMatch = path.match(/\/operator\/camera\/(\d+)/);
+    const slotNum = slotMatch ? Number(slotMatch[1]) : null;
+
+    // No role at all → redirect to /login
+    if (!role) {
+      const loginUrl = req.nextUrl.clone();
+      loginUrl.pathname = "/login";
+      loginUrl.search = `?next=${encodeURIComponent(path)}`;
+      return NextResponse.redirect(loginUrl);
+    }
+
+    // Cameraman role: must match its slot
+    if (isCameramanRole(role)) {
+      const boundSlot = slotFromRole(role);
+      if (slotNum === null || boundSlot !== slotNum) {
+        // Wrong slot — redirect to their own slot.
+        const ownUrl = req.nextUrl.clone();
+        ownUrl.pathname = `/operator/camera/${boundSlot ?? 1}`;
+        return NextResponse.redirect(ownUrl);
+      }
+      return NextResponse.next();
+    }
+
+    // Non-cameraman role: must be in the allowed list
+    if (!allowedForAnySlot.includes(role)) {
+      const loginUrl = req.nextUrl.clone();
+      loginUrl.pathname = "/login";
+      loginUrl.search = `?next=${encodeURIComponent(path)}`;
+      return NextResponse.redirect(loginUrl);
+    }
     return NextResponse.next();
   }
 
-  if (!role || !allowedRoles.includes(role)) {
-    const loginUrl = req.nextUrl.clone();
-    loginUrl.pathname = "/login";
-    loginUrl.search = `?next=${encodeURIComponent(path)}`;
-    return NextResponse.redirect(loginUrl);
+  // ─── /operator/control ──────────────────────────────────────────
+  // Reserved for live_operator and above. Cameramen are bounced to
+  // their own slot URL.
+  if (path.startsWith("/operator/control")) {
+    if (isCameramanRole(role)) {
+      // Cameraman tried to access the control desk → redirect to their slot.
+      const ownUrl = req.nextUrl.clone();
+      ownUrl.pathname = `/operator/camera/${slotFromRole(role) ?? 1}`;
+      return NextResponse.redirect(ownUrl);
+    }
+    const allowedForControl = ["live_operator", "president", "director"];
+    if (!role || !allowedForControl.includes(role)) {
+      const loginUrl = req.nextUrl.clone();
+      loginUrl.pathname = "/login";
+      loginUrl.search = `?next=${encodeURIComponent(path)}`;
+      return NextResponse.redirect(loginUrl);
+    }
+    return NextResponse.next();
   }
+
   return NextResponse.next();
 }
 

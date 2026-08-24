@@ -21,6 +21,9 @@ export type AdminRole =
   | "director"
   | "live_operator"
   | "cameraman"
+  | "cameraman1"
+  | "cameraman2"
+  | "cameraman3"
   | "team_admin";
 
 interface AuthSessionState {

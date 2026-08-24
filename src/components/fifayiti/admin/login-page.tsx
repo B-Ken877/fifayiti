@@ -50,16 +50,28 @@ export function AdminLoginPage() {
         });
         return;
       }
-      // Server set the session cookie. Redirect to the SPA root so the
-      // SPA picks up the session via /api/auth/me and routes to admin.
+      // Server set the session cookie. Redirect to the role's destination.
+      // Cameramen → their slot URL. Everyone else → ?next= or admin SPA.
       toast({
         title: "Byenveni",
         description: "Ou konektye nan administrasyon FIFAYITI.",
       });
+      const r = data.role as string;
       const params = new URLSearchParams(window.location.search);
-      const next = params.get("next") || "/";
-      // Hard navigation so the SPA reboots with a fresh /api/auth/me fetch.
-      window.location.href = next;
+      const next = params.get("next");
+      if (r === "cameraman" || r === "cameraman1") {
+        window.location.href = "/operator/camera/1";
+      } else if (r === "cameraman2") {
+        window.location.href = "/operator/camera/2";
+      } else if (r === "cameraman3") {
+        window.location.href = "/operator/camera/3";
+      } else if (next) {
+        // ?next= was supplied by middleware redirect — honor it.
+        window.location.href = next;
+      } else {
+        // Plain login → SPA root, which will pick the admin dashboard.
+        window.location.href = "/?view=admin-dashboard";
+      }
     } catch (err) {
       toast({
         title: "Erè rezo",

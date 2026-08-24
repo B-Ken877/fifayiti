@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { useAppStore } from "@/store/app-store";
 import { useAuthSessionStore } from "@/store/auth-session-store";
 import { PublicLayout } from "@/components/fifayiti/public/public-layout";
-import { AdminShell } from "@/components/fifayiti/admin/shell";
+import { RoleShell, CameramanRedirect } from "@/components/fifayiti/admin/role-shell";
 import { AdminDashboard } from "@/components/fifayiti/admin/dashboard";
 import { AdminTeamsPage } from "@/components/fifayiti/admin/teams-page";
 import { AdminTeamDetailPage } from "@/components/fifayiti/admin/team-detail-page";
@@ -40,12 +40,15 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Cameraman has no admin SPA access (their role is camera-streaming
-  // only). If they try to reach an admin view, fall through to the
-  // public site rather than rendering AdminShell with nav items they
-  // can't act on. Cameraman only accesses /operator/camera/[slot]
-  // directly via the /login?next=... flow.
-  const isCameraman = adminAuthed && adminRole === "cameraman";
+  // Cameraman roles (cameraman, cameraman1, cameraman2, cameraman3) have
+  // NO admin SPA access — their job is to connect a single camera feed.
+  // If they try to reach an admin view, redirect them to their slot URL.
+  const isCameramanRole = adminAuthed && (
+    adminRole === "cameraman" ||
+    adminRole === "cameraman1" ||
+    adminRole === "cameraman2" ||
+    adminRole === "cameraman3"
+  );
 
   // Old in-SPA login screen still used when user navigates here via
   // "Antre" button (no separate route). The form will POST to
@@ -59,11 +62,16 @@ export default function Home() {
     return <AdminLogin />;
   }
 
-  // Authed admin user requesting an admin view → render AdminShell.
-  // Cameraman is excluded — they have no admin SPA access.
-  if (view.startsWith("admin-") && adminAuthed && !isCameraman) {
+  // Cameraman → hard redirect to its slot URL. They never see the admin SPA.
+  if (view.startsWith("admin-") && isCameramanRole) {
+    return <CameramanRedirect role={adminRole} />;
+  }
+
+  // Authed admin user requesting an admin view → render RoleShell with
+  // the role-specific sidebar.
+  if (view.startsWith("admin-") && adminAuthed && !isCameramanRole) {
     return (
-      <AdminShell>
+      <RoleShell>
         {view === "admin-dashboard" && <AdminDashboard />}
         {view === "admin-teams" && <AdminTeamsPage />}
         {view === "admin-team-detail" && <AdminTeamDetailPage />}
@@ -76,11 +84,11 @@ export default function Home() {
         {view === "admin-discipline" && <DisciplinePage />}
         {view === "admin-admins" && <AdminsPage />}
         {view === "admin-settings" && <SettingsPage />}
-      </AdminShell>
+      </RoleShell>
     );
   }
 
   // Default: public site (also serves as the fallback for cameraman
-  // when they try to reach an admin view).
+  // when they're already at / and not on an admin view).
   return <PublicLayout />;
 }

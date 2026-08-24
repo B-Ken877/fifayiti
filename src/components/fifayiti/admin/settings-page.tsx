@@ -36,6 +36,9 @@ export function SettingsPage() {
       ? "Direktè Konpetisyon"
       : adminRole === "live_operator"
       ? "Operatè live"
+      : adminRole === "cameraman" || adminRole === "cameraman1" ||
+        adminRole === "cameraman2" || adminRole === "cameraman3"
+      ? `Kameraman${adminRole === "cameraman" ? "" : adminRole.slice(-1)}`
       : "Team Admin";
 
   const adminName =
@@ -45,9 +48,17 @@ export function SettingsPage() {
       ? "Mrs. Marie Lafortune"
       : adminRole === "live_operator"
       ? "Mr. Jamesley Telfort"
+      : adminRole === "cameraman"
+      ? "Mr. Carlo Joseph"
+      : adminRole === "cameraman1"
+      ? "Mr. Carlo Joseph"
+      : adminRole === "cameraman2"
+      ? "Mr. Davidson Pierre"
+      : adminRole === "cameraman3"
+      ? "Mr. Joseph Daniel"
       : "Mr. Frantz Nazon";
 
-  const adminEmail = `${adminRole}@fifayiti.ht`.replace("_", ".");
+  const adminEmail = `${adminRole}@fifayiti.com`;
 
   const save = () => {
     toast({

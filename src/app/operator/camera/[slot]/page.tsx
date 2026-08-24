@@ -3,7 +3,7 @@ import { useRef, useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { Room, RoomEvent, Track, createLocalTracks } from "livekit-client";
 import { BrandMark } from "@/components/fifayiti/brand-mark";
-import { Camera, CameraOff, Radio, Wifi, WifiOff, Users, Eye, AlertCircle } from "lucide-react";
+import { Camera, CameraOff, Radio, Wifi, WifiOff, Users, Eye, AlertCircle, LogOut, UserCircle } from "lucide-react";
 
 export default function CameraPage() {
   const params = useParams<{ slot: string }>();
@@ -20,6 +20,28 @@ export default function CameraPage() {
   const [viewerCount, setViewerCount] = useState(0);
   const [operatorOnline, setOperatorOnline] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [cameramanRole, setCameramanRole] = useState<string>("");
+
+  // Pull the trusted role from /api/auth/me so we can greet the
+  // cameraman by their account name (cameraman1 / cameraman2 / cameraman3
+  // / cameraman — legacy). This is display only; the middleware
+  // already enforced slot binding before this page loaded.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/me", { cache: "no-store" });
+        const d = await r.json();
+        if (!cancelled && d?.authed && d?.role) setCameramanRole(d.role);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const logout = async () => {
+    try { await fetch("/api/auth/logout", { method: "POST" }); } catch {}
+    window.location.href = "/";
+  };
 
   if (![1, 2, 3].includes(slot)) {
     return (
@@ -181,7 +203,22 @@ export default function CameraPage() {
       <header className="bg-[#084C2A] border-b border-fifayiti-line">
         <div className="max-w-[1280px] mx-auto px-4 py-3 flex items-center justify-between">
           <BrandMark size="sm" variant="white" />
-          <span className="eyebrow text-[#F4C400]">Kameraman · Slot {slot}</span>
+          <div className="flex items-center gap-3">
+            <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10">
+              <UserCircle size={14} className="text-[#F4C400]" />
+              <span className="eyebrow text-white">{cameramanRole || "cameraman"}@fifayiti.com</span>
+            </div>
+            <span className="eyebrow text-[#F4C400]">Slot {slot}</span>
+            <button
+              onClick={logout}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+              style={{ minHeight: 36 }}
+              aria-label="Dekonekte"
+            >
+              <LogOut size={14} className="text-white" />
+              <span className="eyebrow text-white hidden md:inline">Dekonekte</span>
+            </button>
+          </div>
         </div>
       </header>
 

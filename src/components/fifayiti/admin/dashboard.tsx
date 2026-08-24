@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useAppStore } from "@/store/app-store";
+import { useAuthSessionStore } from "@/store/auth-session-store";
+import { RoleGreetingBanner } from "./role-shell";
 import { TeamCrest } from "../team-crest";
 import { LiveBadge } from "../live-badge";
 import {
@@ -49,6 +51,7 @@ interface MatchData {
 
 export function AdminDashboard() {
   const { setView, setActiveMatchId, online, pendingSync } = useAppStore();
+  const { adminRole } = useAuthSessionStore();
   const [teams, setTeams] = useState<TeamData[]>([]);
   const [matches, setMatches] = useState<MatchData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -145,6 +148,9 @@ export function AdminDashboard() {
 
   return (
     <div className="space-y-6">
+      {/* Role-specific greeting banner */}
+      <RoleGreetingBanner role={adminRole} />
+
       {/* KPI grid */}
       <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         {kpis.map((k) => {

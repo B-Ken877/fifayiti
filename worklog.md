@@ -559,3 +559,118 @@ Stage Summary:
   with no auth)
 - Commit 2973260 pushed to github.com/B-Ken877/fifayiti (private repo,
   main branch) — 14 files, +792 / −162 lines
+
+---
+Task ID: 9-v2
+Agent: Super Z (main agent)
+Task: Add per-cameraman credentials + role-specialized dashboards.
+  User said: "Each cameraman should have their own credentials, also
+  give me the credentials not on a table but just normal text. I see
+  multiple role share the same interface although not the same
+  permissions, i want each role interface to be special regrading what
+  they have to do."
+
+Work Log:
+- Found prior Task 9 already deployed a working auth system (HMAC-
+  signed cookie sessions + scrypt-hashed passwords for 5 roles).
+- The user's NEW requirements:
+  · Each cameraman needs its OWN account (no shared credential)
+  · Each role needs its OWN dashboard (no more shared AdminShell with
+    13 nav items shown to all roles regardless of permission)
+
+- Generated 3 dedicated cameraman accounts using scrypt:
+  · cameraman1@fifayiti.com / cameraman1fifAYITI.com → bound to slot 1
+  · cameraman2@fifayiti.com / cameraman2fifAYITI.com → bound to slot 2
+  · cameraman3@fifayiti.com / cameraman3fifAYITI.com → bound to slot 3
+  · Legacy cameraman@fifayiti.com kept as fallback (also bound to slot 1)
+- Extended FifayitiRole type to include cameraman1/2/3. Updated
+  permissions.ts + auth-session-store.ts to recognize the new roles.
+
+- Updated src/middleware.ts to enforce slot binding:
+  · cameraman1 (or legacy cameraman) → can access /operator/camera/1 ONLY
+  · cameraman2 → /operator/camera/2 ONLY
+  · cameraman3 → /operator/camera/3 ONLY
+  · Any cameraman trying another slot → redirect to their own slot
+  · Any cameraman trying /operator/control → redirect to their slot
+    (control desk is for live_operator / president / director only)
+  · president / director / live_operator can reach ANY slot + control
+  · team_admin → bounced to /login if tries any /operator/* path
+
+- Created src/components/fifayiti/admin/role-shell.tsx exporting:
+  · RoleShell           — sidebar + header that picks the right nav
+                          items per role (ROLE_PRESETS map)
+  · CameramanRedirect   — client component that hard-redirects a
+                          cameraman role to its slot URL
+  · RoleGreetingBanner  — role-specific welcome card with icon, title,
+                          description + "Ale nan match" CTA
+- Replaced src/app/page.tsx to use RoleShell instead of the old
+  AdminShell. Cameraman roles now CameramanRedirect instead of trying
+  to render an admin SPA they have no nav for.
+- Updated dashboard.tsx to render RoleGreetingBanner at the top so
+  the operator sees immediately what they can do today.
+
+- Sidebar presets per role:
+  · President      — full 13-item superuser sidebar (unchanged)
+  · Director       — 12 items (no Administratè / admins.manage page)
+  · Live operator  — Apèsi + Match / TV / Replay + Orè / Konpetisyon
+                     / Paramèt (7 items — no Ekip/Finans/Disiplin/Admins)
+  · Team admin      — Apèsi + Ekip / Jwè / Orè / Paramèt (5 items,
+                     read-only focus)
+  · Cameraman (any) — no SPA at all → hard redirect to slot URL
+
+- Updated login.tsx + login-page.tsx to redirect each role to its
+  destination on success:
+  · cameraman/cameraman1 → /operator/camera/1
+  · cameraman2           → /operator/camera/2
+  · cameraman3           → /operator/camera/3
+  · everyone else        → ?next= or /?view=admin-dashboard
+
+- Updated camera page (/operator/camera/[slot]/page.tsx) to:
+  · Fetch /api/auth/me and greet the cameraman by their email in the
+    header (cameraman1@fifayiti.com / cameraman2@fifayiti.com / etc.)
+  · Show "Slot N" badge + logout button next to the brand mark
+
+- Updated settings-page.tsx to handle cameraman1/2/3 role labels +
+  display proper Haitian-Creole display names (Mr. Carlo Joseph /
+  Mr. Davidson Pierre / Mr. Joseph Daniel) and adminEmail.
+
+- Rewrote src/lib/auth/MOCK_NOTICE.md to reflect current production
+  status (replaces the old pilot-only warnings).
+
+- Build: 14 routes registered, no errors, middleware compiled clean.
+- Restarted PM2 fifayiti (id 18).
+- Verified via requests.Session:
+  · All 8 accounts login successfully and /api/auth/me returns correct role
+  · Slot binding: cameraman1 → /operator/camera/1 (200), /2 (307), /control (307)
+  · cameraman2 → /operator/camera/2 (200), /3 (307)
+  · president → any slot + control (200)
+  · team_admin → /operator/* (307 to /login)
+  · Negative: bad password (401), bad email (401)
+- Visual smoke checks via agent-browser + VLM (4 screenshots):
+  · president-dashboard.png  — 13 nav items, "PR" badge, "Byenveni,
+                                Prezidan" banner with superuser text
+  · director-dashboard.png   — 12 nav items (no Administratè), "DK"
+                                badge, "Byenveni, Direktè Konpetisyon"
+  · live-operator-dashboard.png — 7 nav items (Match / TV / Replay
+                                + Orè / Konpetisyon / Paramèt), "OP"
+                                badge, "Byenveni, Operatè live"
+  · team-admin-dashboard.png — 5 nav items (Ekip / Jwè / Orè /
+                                Paramèt), "TA" badge, "Byenveni,
+                                Administratè ekip"
+  · cameraman2-slot.png      — header shows cameraman2@fifayiti.com,
+                                "SLOT 2", logout button. Manual nav
+                                to /operator/camera/1 and /3 redirect
+                                back to /2 (enforced by middleware)
+
+Stage Summary:
+- 8 staff accounts now exist (3 dedicated cameramen + 5 existing roles)
+- Each role gets its OWN dashboard with sidebar tailored to its actual
+  tasks — no more "every role sees the same 13 nav items"
+- Each cameraman has its OWN credentials and is bound server-side to
+  one specific camera slot (cameraman1↔slot1, etc.)
+- President sees everything; director sees everything except admins
+  management; live operator sees broadcast + schedule + settings; team
+  admin sees only read-only teams/players/schedule/settings; each
+  cameraman sees only their own camera slot page (no SPA access)
+- All enforced by middleware (server-side), not just by hiding nav
+  items client-side

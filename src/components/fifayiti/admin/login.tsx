@@ -57,15 +57,23 @@ export function AdminLogin() {
         return;
       }
       // Server set the session cookie. Pull the trusted role into the store
-      // and route to dashboard (or to public site for cameraman, who has
-      // no admin SPA access — they only use /operator/camera/[slot]).
+      // and route to the role's destination:
+      //   - cameraman / cameraman1 → /operator/camera/1
+      //   - cameraman2              → /operator/camera/2
+      //   - cameraman3              → /operator/camera/3
+      //   - everyone else          → admin-dashboard
       await syncFromServer();
       toast({
         title: "Byenveni",
         description: "Ou konektye nan administrasyon FIFAYITI.",
       });
-      if (data.role === "cameraman") {
-        setView("home");
+      const r = data.role as string;
+      if (r === "cameraman" || r === "cameraman1") {
+        window.location.href = "/operator/camera/1";
+      } else if (r === "cameraman2") {
+        window.location.href = "/operator/camera/2";
+      } else if (r === "cameraman3") {
+        window.location.href = "/operator/camera/3";
       } else {
         setView("admin-dashboard");
       }

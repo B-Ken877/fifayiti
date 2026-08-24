@@ -1,17 +1,21 @@
 // AUTO-GENERATED — server-only. Do not import this from client components.
 //
-// scrypt(N=16384, r=8, p=1, dklen=32) password hashes for the 5 FIFAYITI roles.
-// Each role has a unique 16-byte random salt. Plaintext passwords are NOT
-// stored here (or anywhere in the repo) — only the salt + derived key.
+// scrypt(N=16384, r=8, p=1, dklen=32) password hashes for the FIFAYITI
+// staff accounts. Each account has a unique 16-byte random salt.
+// Plaintext passwords are NOT stored here (or anywhere in the repo)
+// — only the salt + derived key.
 //
-// To rotate a password: regenerate with scripts/gen-credentials.py and
-// replace this file.
+// To rotate a password: regenerate with scripts/gen-credentials.py
+// and replace this file.
 
 export type FifayitiRole =
   | "president"
   | "director"
   | "live_operator"
   | "cameraman"
+  | "cameraman1"
+  | "cameraman2"
+  | "cameraman3"
   | "team_admin";
 
 export interface CredentialRecord {
@@ -51,6 +55,24 @@ export const CREDENTIALS: CredentialRecord[] = [
     email: "team_admin@fifayiti.com",
     saltHex: "a0ce2b9b02b35eb616ee515ec1204712",
     hashHex: "5896bc47e128415c234805385c10995735ccf0fb6b060b2dd13217afa1593220",
+  },
+  {
+    role: "cameraman1",
+    email: "cameraman1@fifayiti.com",
+    saltHex: "49e5e1fc68a3d315557bbf4179acd7c4",
+    hashHex: "a404b861cdc7aee7004de18a6ff6d74c5fc31d5a14f4f9e9eb6579243f03bec4",
+  },
+  {
+    role: "cameraman2",
+    email: "cameraman2@fifayiti.com",
+    saltHex: "79d69df2b2ee335852353250156b631f",
+    hashHex: "949dcf0ba725bc351006510da53f8212d7f159e24591a2b3f55272667c5510d8",
+  },
+  {
+    role: "cameraman3",
+    email: "cameraman3@fifayiti.com",
+    saltHex: "7a5fc5bd4df139044bc4dcdc9866d994",
+    hashHex: "37f1e9444814458ff0c1b8f024ac6acb4dd89c75f6148c3f7aed78d37d97ad89",
   },
 ];
 
