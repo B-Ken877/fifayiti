@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { RoomServiceClient } from "livekit-server-sdk";
+import { ensureHlsEgress, stopHlsEgress } from "@/lib/streaming/hls-egress";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
@@ -82,6 +83,20 @@ export async function POST(req: NextRequest) {
 
     // 1. Always persist to disk first — cheap and survives room deletion.
     await writePersistedState(metadata);
+
+    // 1b. HLS/DVR egress lifecycle (Task 15): the broadcast being on air
+    //     (selectedSlot set) keeps the HLS recorder running; going off air
+    //     finalizes the recording (playlist gets #EXT-X-ENDLIST — usable as
+    //     a full-match VOD later). Failures never break the room update.
+    try {
+      if (metadata?.selectedSlot != null) {
+        await ensureHlsEgress();
+      } else {
+        await stopHlsEgress();
+      }
+    } catch (e: any) {
+      console.warn("[livekit-room] hls egress lifecycle error:", e?.message);
+    }
 
     // 2. Update the LiveKit room metadata. If the room was idle-deleted,
     //    re-create it with the metadata (1h empty timeout) so the call

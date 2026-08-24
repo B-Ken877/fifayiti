@@ -804,3 +804,37 @@ Stage Summary:
 - Default publish quality tuned for Haitian mobile upload (720p/3Mbps) with HD toggle for good connections
 
 - Task 13 postscript: first deploy had a duplicated quality block (partial MultiEdit + script both applied) that failed the build and briefly 502'd the site; fixed by deduplicating and rebuilding with exit-code verification. Site restored + quality selector deployed.
+---
+Task ID: 14
+Agent: Super Z (main agent)
+Task: WebRTC smooth on control desk but video does not appear on TV
+
+Work Log:
+- Reproduced end-to-end with RTMP test camera + real browser: TV page subscription/display logic verified WORKING (video playing, scorebug live)
+- Server log forensics of user's session: camera phone (Android/Natcom) reconnected every 30-90s (DTLS timeouts); handleCameraGone wiped selectedSlot=null destructively on EVERY blip; operator re-selected repeatedly (203/206-byte metadata toggles); TV viewer (old cached bundle) saw blank most of the time
+- Fixes: (1) operator control page 20s reconnect grace — on-air slot not wiped when camera blips, timer cancels on return, tile shows 'ap rekonekte' during grace; (2) /api/livekit-room phantom guard 15s lastCameramanSeen grace — TV viewers keep the broadcast (frozen frame) through brief drops instead of flashing to placeholder
+- Deployed, build verified, git pushed
+
+Stage Summary:
+- Camera network blips (<20s) no longer take the broadcast off air; LiveKit auto-reconnect restores video seamlessly
+---
+Task ID: 15
+Agent: Super Z (main agent)
+Task: FIFAYITI TV professional broadcast experience — HLS/DVR pipeline + YouTube-style player + fullscreen button
+
+Work Log:
+- Architecture: added livekit/egress (v1.14.1, host network, redis, /var/www/fifayiti/hls output) room-composite HLS egress with CUSTOM RECORDING TEMPLATE (/egress-template route) that subscribes only to the operator-selected camera (room metadata selectedSlot) — one continuous recording per broadcast, camera switches are seamless, DVR continuity preserved
+- Fixed egress bootstrap issues: config must be passed via EGRESS_CONFIG_FILE env (image entrypoint ignores docker command args); template UMD global is LivekitClient (not LiveKit) + camelCase event names; hls session folders chmod 777 (egress runs as uid 1001); self-healing restart when egress dies (viewer status poll detects broadcast-on + egress-dead)
+- Pipeline: 1s MPEG-TS segments, EVENT playlist (index.m3u8 = full-match DVR/VOD) + LIVE sliding playlist (live.m3u8), 720p30 x264 ~2.5Mbps AAC, PROGRAM-DATE-TIME on every segment
+- nginx: /hls/ location (m3u8 no-cache, correct MIME)
+- BroadcastPlayer (hls.js): DVR timeline with live edge, pause/resume, ±10s, scrub, 'X:XX dèyè LIVE' indicator, RETOUNEN LIVE button, YouTube-style fullscreen button BOTTOM-RIGHT with rotating icon swap (Maximize2 ↔ Minimize2 rotate-180 transition), auto-hide controls, keyboard shortcuts, gentle live catch-up (maxLiveSyncPlaybackRate 1.25), robust retry policies, SAN SON badge when no audio
+- TV page: polls /api/livekit-hls, auto-switches HLS player ↔ WebRTC fallback, unsubscribes WebRTC video when HLS active (bandwidth), scorebug/LIVE badge/goal flash overlays preserved
+- /api/livekit-room POST now drives egress lifecycle (on-air → ensure, off-air → stop+finalize VOD); /api/livekit-hls GET status/self-heal + POST manual control (staff auth); operator page DVR AKTIF chip
+- E2E VERIFIED (agent-browser as real viewer): HLS playback 720p, glass-to-glass ~3.7s (2.7s server + 1.0s sync; target 2-3s, max 5s), pause freezes position while buffer grows, rewind 10s + timeline scrub to 25% work, behind indicator + RETOUNEN LIVE returns to edge, LIVE badge, fullscreen button bottom-right with maximize icon (headless env cannot enter real fullscreen - same code path as previously-working button), 30s+ stability no errors, DVR window grows whole match, dropped frames negligible
+- Retention: scripts/cleanup-hls.sh daily cron (7d age + 6GB size caps, protects active session)
+- docs/STREAMING-ARCHITECTURE.md: full architecture map, latency budget, future replay/highlights readiness
+
+Stage Summary:
+- FIFAYITI TV now a professional broadcast: controlled ~3-4s latency, stable HLS delivery, full DVR controls, YouTube-style player with rotating fullscreen button
+- Every broadcast session is recorded as VOD-ready HLS on disk — instant replay/full-match replay/highlights are additive features now, not re-architecture
+

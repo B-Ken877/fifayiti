@@ -21,6 +21,8 @@ export default function OperatorPage() {
   const [teams, setTeams] = useState<Record<string, any>>({});
   const [activeMatchId, setActiveMatchId] = useState("");
   const [matchData, setMatchData] = useState<any>(null);
+  // HLS/DVR pipeline status (auto-managed by /api/livekit-room)
+  const [hlsActive, setHlsActive] = useState(false);
 
   const roomRef = useRef<Room | null>(null);
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({ 1: null, 2: null, 3: null });
@@ -47,6 +49,21 @@ export default function OperatorPage() {
   const teamsRef = useRef<Record<string, any>>({});
 
   useEffect(() => { selectedSlotRef.current = selectedSlot; }, [selectedSlot]);
+
+  // HLS/DVR status chip — poll the egress pipeline state
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const r = await fetch("/api/livekit-hls", { cache: "no-store" });
+        if (!r.ok) return;
+        const d = await r.json();
+        setHlsActive(!!d.active);
+      } catch {}
+    };
+    poll();
+    const i = setInterval(poll, 10000);
+    return () => clearInterval(i);
+  }, []);
   useEffect(() => { matchDataRef.current = matchData; }, [matchData]);
   useEffect(() => { activeMatchIdRef.current = activeMatchId; }, [activeMatchId]);
   useEffect(() => { matchesRef.current = matches; }, [matches]);
@@ -406,6 +423,14 @@ export default function OperatorPage() {
             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10">
               <Eye size={14} />
               <span className="eyebrow tnum">{viewerCount}</span>
+            </div>
+            <div
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg"
+              style={{ background: hlsActive ? "#116B3A" : "rgba(102,112,133,0.35)" }}
+              title={hlsActive ? "Anrejistreman HLS/DVR ap mache — TV gen DVR ak ~3s reta" : "Pipeline HLS/DVR pa aktif"}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-white" style={{ opacity: hlsActive ? 1 : 0.5 }} />
+              <span className="eyebrow">DVR {hlsActive ? "AKTIF" : "OFF"}</span>
             </div>
             {selectedSlot !== null && (
               <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#F4C400] text-[#084C2A]">

@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, RemoteTrack, RemoteParticipant, Track } from "livekit-client";
-import { Radio, Maximize, Calendar, MapPin, ChevronRight, Users } from "lucide-react";
+import { Radio, Calendar, MapPin, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScoreBug } from "@/components/fifayiti/scorebug";
+import { BroadcastPlayer } from "@/components/fifayiti/tv/broadcast-player";
 
 const WS_URL = "wss://fifayiti.medikahaiti.site/livekit-ws";
 const ROOM_NAME = "fifayiti-broadcast";
@@ -34,6 +35,12 @@ export function TvPage() {
   const [nextMatch, setNextMatch] = useState<any>(null);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
 
+  // HLS/DVR broadcast player state (Task 15). When the egress pipeline is
+  // ready, the page switches from direct-WebRTC to the HLS BroadcastPlayer
+  // (~2-4s controlled latency + DVR) and unsubscribes the WebRTC video to
+  // save bandwidth. The room connection stays for metadata + viewer count.
+  const [hlsSrc, setHlsSrc] = useState<string | null>(null);
+
   const roomRef = useRef<Room | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -53,6 +60,44 @@ export function TvPage() {
         if (next) setNextMatch(next);
       } catch {}
     })();
+  }, []);
+
+  // ── HLS/DVR status polling ────────────────────────────────────────
+  useEffect(() => {
+    const unsubAllVideo = () => {
+      const room = roomRef.current;
+      if (!room) return;
+      for (const p of room.remoteParticipants.values()) {
+        for (const pub of p.trackPublications.values()) {
+          if (pub.kind === Track.Kind.Video && pub.isSubscribed) {
+            try { pub.setSubscribed(false); } catch {}
+          }
+        }
+      }
+    };
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/livekit-hls", { cache: "no-store" });
+        if (!res.ok) return;
+        const d = await res.json();
+        if (d.active && d.ready && d.url) {
+          setHlsSrc((prev) => {
+            if (prev == null) {
+              // HLS carries the video now — stop downloading WebRTC tracks
+              unsubAllVideo();
+              return d.url;
+            }
+            return prev;
+          });
+        } else if (!d.active) {
+          // Egress stopped (broadcast ended) → back to WebRTC fallback
+          setHlsSrc(null);
+        }
+      } catch {}
+    };
+    poll();
+    const i = setInterval(poll, 5000);
+    return () => clearInterval(i);
   }, []);
 
   useEffect(() => {
@@ -184,11 +229,34 @@ export function TvPage() {
       {/* ═══ VIDEO ═══ */}
       <div className="max-w-[1280px] mx-auto px-4 pt-4">
         <div ref={containerRef} className={cn("relative aspect-video rounded-lg overflow-hidden bg-black border border-white/10", isFullscreen && "rounded-none border-none aspect-auto h-screen w-screen")}>
-          {/* The <video> element is ALWAYS mounted (hidden with CSS until frames
-              arrive) so LiveKit can attach the selected camera track to it.
-              Previously it was conditionally rendered only when hasVideo was
-              true — but hasVideo could only become true after attaching to
-              this element, which never existed. Deadlock: video never showed. */}
+          {hlsSrc ? (
+            /* ── HLS/DVR broadcast player (Task 15) ──
+               ~2-4s controlled latency + DVR timeline + broadcast controls.
+               Overlays (scorebug, live badge, goal flash) render on top. */
+            <BroadcastPlayer src={hlsSrc}>
+              {matchData && (
+                <div className="absolute top-2 left-2 md:top-3 md:left-3 z-10">
+                  <ScoreBug
+                    homeShort={matchData.homeShort}
+                    homeColor={matchData.homeColor}
+                    awayShort={matchData.awayShort}
+                    awayColor={matchData.awayColor}
+                    homeScore={matchData.homeScore}
+                    awayScore={matchData.awayScore}
+                    minute={Math.floor((matchData.clock ?? 0) / 60)}
+                    goalFlash={goalFlash}
+                  />
+                </div>
+              )}
+              <div className="absolute top-2 right-2 md:top-3 md:right-3 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#D92D20] shadow-md"><span className="w-1 h-1 rounded-full bg-white animate-pulse" /><span className="text-[8px] md:text-[9px] font-extrabold text-white uppercase tracking-wider">Live</span></div>
+              {goalFlash && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10"><div className="px-3 py-1 rounded bg-[#F4C400] animate-pulse"><span className="text-xs font-extrabold text-[#064E2A]">⚽ Goal!</span></div></div>}
+              <div className="absolute bottom-16 right-2 z-10 flex items-center gap-0.5 pointer-events-none"><div className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-black/70"><span className="text-[8px] text-white/50">Views</span><span className="text-[8px] font-bold text-white tnum">{viewerCount}</span></div></div>
+            </BroadcastPlayer>
+          ) : (
+          <>
+          {/* WebRTC fallback (egress warming up or unavailable) — the
+              <video> element is ALWAYS mounted (hidden with CSS until frames
+              arrive) so LiveKit can attach the selected camera track. */}
           <video
             ref={videoRef}
             autoPlay
@@ -197,14 +265,14 @@ export function TvPage() {
             className="w-full h-full object-cover"
             style={{ display: hasVideo ? "block" : "none" }}
           />
-          {!hasVideo && (
+          {!hasVideo && !hlsSrc && (
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <Radio size={28} className="text-[#F4C400] mb-2" />
               <p className="text-sm font-bold text-white">{connected ? "Tann kamera..." : "Pa gen match an dirèk"}</p>
               <p className="text-xs text-white/40 mt-0.5">{selectedSlot !== null ? "Retransmisyon an ap kòmanse..." : "Operatè a poko kòmanse retransmisyon an."}</p>
             </div>
           )}
-          {hasVideo && (
+          {hasVideo && !hlsSrc && (
             <>
               {/* Scorebug — TOP-LEFT, compact broadcast style.
                   Clock is in SECONDS in matchData — convert to minutes. */}
@@ -226,6 +294,8 @@ export function TvPage() {
               {goalFlash && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10"><div className="px-3 py-1 rounded bg-[#F4C400] animate-pulse"><span className="text-xs font-extrabold text-[#064E2A]">⚽ Goal!</span></div></div>}
               <div className="absolute bottom-2 right-2 z-10 flex items-center gap-1"><div className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-black/70"><span className="text-[8px] text-white/50">Views</span><span className="text-[8px] font-bold text-white tnum">{viewerCount}</span></div><button onClick={toggleFullscreen} className="flex items-center justify-center w-5 h-5 rounded bg-black/70 hover:bg-black/90"><Maximize size={10} className="text-white" /></button></div>
             </>
+          )}
+          </>
           )}
         </div>
       </div>
