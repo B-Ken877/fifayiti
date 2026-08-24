@@ -28,6 +28,17 @@ export default function OperatorPage() {
   // Track pending tracks that arrived before metadata
   const pendingTracks = useRef<Record<string, RemoteTrack>>({});
 
+  // ── Reconnect grace ──────────────────────────────────────────────
+  // Camera phones on Haitian mobile data blip constantly (DTLS timeouts,
+  // NAT rebinding). Each blip used to wipe the broadcast instantly
+  // (selectedSlot=null) — the operator had to re-select after every
+  // dropout and the TV went dark. Now: when the on-air camera drops we
+  // keep the broadcast selected for GRACE ms, giving LiveKit's
+  // auto-reconnect time to restore the same camera. Only after the grace
+  // expires with no camera do we switch away / go dark.
+  const RECONNECT_GRACE_MS = 20_000;
+  const reconnectTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+
   // ─── Latest-state refs (LiveKit event handlers avoid stale closures) ───
   const selectedSlotRef = useRef<number | null>(null);
   const matchDataRef = useRef<any>(null);
@@ -102,7 +113,10 @@ export default function OperatorPage() {
               const gone = Number(s);
               setSlots((prev) => ({ ...prev, [gone]: { active: false } }));
               delete slotToParticipant.current[gone];
-              handleCameraGone(gone);
+              // Grace period: don't wipe the broadcast yet — the camera
+              // is probably auto-reconnecting. handleCameraGone fires only
+              // if it doesn't come back within RECONNECT_GRACE_MS.
+              scheduleCameraGone(gone);
             }
           }
           delete pendingTracks.current[participant.identity];
@@ -196,15 +210,41 @@ export default function OperatorPage() {
     return () => {
       cancelled = true;
       if (roomRef.current) roomRef.current.disconnect();
+      // Clear any pending reconnect-grace timers
+      for (const t of Object.values(reconnectTimers.current)) clearTimeout(t);
+      reconnectTimers.current = {};
     };
   }, []);
 
   const attachToSlot = (slotNum: number, identity: string, track: RemoteTrack) => {
     slotToParticipant.current[slotNum] = identity;
+    // Camera is (back) at this slot — cancel any pending wipe timer
+    cancelCameraGone(slotNum);
+    setSlots((prev) => ({ ...prev, [slotNum]: { active: true } }));
     const videoEl = videoRefs.current[slotNum];
     if (videoEl) {
       track.attach(videoEl);
       console.log(`[operator] attached track to slot ${slotNum}`);
+    }
+  };
+
+  // ── Grace-period helpers (see RECONNECT_GRACE_MS above) ──────────
+  const scheduleCameraGone = (slot: number) => {
+    if (reconnectTimers.current[slot]) clearTimeout(reconnectTimers.current[slot]);
+    if (selectedSlotRef.current !== slot) return; // only the on-air slot matters
+    reconnectTimers.current[slot] = setTimeout(() => {
+      delete reconnectTimers.current[slot];
+      // Still gone? Then switch away / go dark for real.
+      if (!slotToParticipant.current[slot]) handleCameraGone(slot);
+    }, RECONNECT_GRACE_MS);
+    console.log(`[operator] slot ${slot} lost — grace period ${RECONNECT_GRACE_MS / 1000}s before dropping broadcast`);
+  };
+
+  const cancelCameraGone = (slot: number) => {
+    if (reconnectTimers.current[slot]) {
+      clearTimeout(reconnectTimers.current[slot]);
+      delete reconnectTimers.current[slot];
+      console.log(`[operator] slot ${slot} reconnected — broadcast kept`);
     }
   };
 
@@ -415,10 +455,19 @@ export default function OperatorPage() {
                   {!s.active && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/70">
                       <div className="text-center">
-                        <Camera size={32} className="mx-auto text-white/30 mb-2" />
-                        <p className="body-sm font-bold text-white/60">Slot {slot}</p>
-                        <p className="meta text-white/40 mt-1">Kameraman pa konekte</p>
-                        <p className="meta text-white/40 mt-1">URL: <code className="text-[#F4C400]">/operator/camera/{slot}</code></p>
+                        <Camera size={32} className={cn("mx-auto mb-2", isSelected ? "text-[#F4C400] animate-pulse" : "text-white/30")} />
+                        {isSelected ? (
+                          <>
+                            <p className="body-sm font-bold text-[#F4C400]">Slot {slot} ap rekonekte...</p>
+                            <p className="meta text-white/40 mt-1">Broadcast la rete louvri pandan 20s</p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="body-sm font-bold text-white/60">Slot {slot}</p>
+                            <p className="meta text-white/40 mt-1">Kameraman pa konekte</p>
+                          </>
+                        )}
+                        {!isSelected && <p className="meta text-white/40 mt-1">URL: <code className="text-[#F4C400]">/operator/camera/{slot}</code></p>}
                       </div>
                     </div>
                   )}

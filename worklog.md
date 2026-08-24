@@ -803,3 +803,4 @@ Stage Summary:
 - WebRTC browser broadcast is the documented primary path for phone cameramen; Streamlabs = emergency backup only
 - Default publish quality tuned for Haitian mobile upload (720p/3Mbps) with HD toggle for good connections
 
+- Task 13 postscript: first deploy had a duplicated quality block (partial MultiEdit + script both applied) that failed the build and briefly 502'd the site; fixed by deduplicating and rebuilding with exit-code verification. Site restored + quality selector deployed.

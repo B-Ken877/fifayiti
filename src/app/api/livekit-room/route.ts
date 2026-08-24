@@ -114,6 +114,15 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// When a cameraman was last seen connected (ms epoch, module-level —
+// survives across requests in this server process). Used by the
+// phantom-live guard's RECONNECT GRACE: camera phones on Haitian mobile
+// data blip constantly, and LiveKit's auto-reconnect restores them in a
+// few seconds. Nuking selectedSlot the instant the participant list is
+// empty made the TV flash dark on every blip.
+let lastCameramanSeen = 0;
+const CAMERAMAN_GRACE_MS = 15_000;
+
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
@@ -161,15 +170,22 @@ export async function GET(req: NextRequest) {
       metadata = await readPersistedState();
     }
 
-    // ── Phantom-live guard ──
+    // ── Phantom-live guard (with reconnect grace) ──
     // If the saved state says a slot is on air but NO cameraman is connected
     // (room idle-deleted, or everyone left without clearing the state), force
     // the slot off. Viewers must never see "AN DIRÈK" with no video.
     //   - Room missing  → zero participants → definitely off.
-    //   - Participants enumerated and no cameraman found → off.
+    //   - Participants enumerated and no cameraman found → off, UNLESS a
+    //     cameraman was seen within CAMERAMAN_GRACE_MS (reconnecting).
     //   - Enumeration failed → keep saved state (avoid false negatives).
+    if (participantsChecked && cameramanOnline) {
+      lastCameramanSeen = Date.now();
+    }
+    const withinReconnectGrace =
+      Date.now() - lastCameramanSeen < CAMERAMAN_GRACE_MS;
     const broadcastImpossible =
-      !room || (participantsChecked && !cameramanOnline);
+      !room ||
+      (participantsChecked && !cameramanOnline && !withinReconnectGrace);
     if (metadata && metadata.selectedSlot != null && broadcastImpossible) {
       metadata = { ...metadata, selectedSlot: null };
     }
