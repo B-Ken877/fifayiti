@@ -53,7 +53,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-interface NavItem { label: string; view: ViewKey; icon: LucideIcon; group?: string; }
+// href?: when set, the item navigates to a standalone route (full page
+// navigation) instead of switching the SPA view. Used for the broadcast
+// studio at /operator/control, which lives outside the SPA.
+interface NavItem { label: string; view: ViewKey; icon: LucideIcon; group?: string; href?: string; }
 interface RolePreset {
   label: string;        // long role name shown in header
   avatar: string;       // 2-char avatar
@@ -72,6 +75,7 @@ const FULL_NAV: NavItem[] = [
   { label: "Konpetisyon", view: "admin-competitions", icon: Trophy },
   { label: "Orè", view: "admin-schedule", icon: CalendarClock },
   { label: "Match", view: "admin-match-control", icon: Megaphone },
+  { label: "Estidyo — Kamera sou TV", view: "admin-match-control", href: "/operator/control", icon: Radio },
   { label: "Klasman", view: "standings", icon: BarChart3 },
   { label: "FIFAYITI TV", view: "tv", icon: Tv, group: "Broadcast" },
   { label: "Replay", view: "admin-replays", icon: Film },
@@ -109,7 +113,10 @@ const LIVE_OPERATOR_PRESET: RolePreset = {
   tagline: "Broadcast — match, kamera, replay",
   nav: [
     { label: "Apèsi", view: "admin-dashboard", icon: LayoutDashboard },
-    { label: "Match", view: "admin-match-control", icon: Megaphone, group: "Broadcast" },
+    // ⭐ The operator's PRIMARY tool — the broadcast desk where the 3
+    // camera feeds appear and one gets put ON AIR. Standalone route.
+    { label: "Estidyo — Kamera sou TV", view: "admin-match-control", href: "/operator/control", icon: Radio, group: "Broadcast" },
+    { label: "Match (Evènman + Skò)", view: "admin-match-control", icon: Megaphone },
     { label: "FIFAYITI TV", view: "tv", icon: Tv },
     { label: "Replay", view: "admin-replays", icon: Film },
     { label: "Orè", view: "admin-schedule", icon: CalendarClock, group: "Kontèks" },
@@ -239,17 +246,26 @@ export function RoleShell({ children }: { children: React.ReactNode }) {
           <div className="px-3 space-y-0.5">
             {nav.map((item, idx) => {
               const Icon = item.icon;
-              const active = view === item.view ||
-                (view === "admin-team-detail" && item.view === "admin-teams");
+              // href items navigate to standalone routes — never "active"
+              // (they leave the SPA, so SPA view comparison is meaningless).
+              const active = !item.href && (view === item.view ||
+                (view === "admin-team-detail" && item.view === "admin-teams"));
+              const handleNav = () => {
+                if (item.href) {
+                  // Standalone route (e.g. /operator/control) — full page
+                  // navigation. Middleware re-verifies the role there.
+                  window.location.href = item.href;
+                  return;
+                }
+                setView(item.view); setMobileOpen(false);
+              };
               if (item.group) {
                 return (
                   <div key={`${item.label}-${idx}`}>
                     <p className="pt-4 pb-1 px-2 eyebrow text-white/40">
                       {item.group}
                     </p>
-                    <NavBtn item={item} active={active} onClick={() => {
-                      setView(item.view); setMobileOpen(false);
-                    }} />
+                    <NavBtn item={item} active={active} onClick={handleNav} />
                   </div>
                 );
               }
@@ -258,7 +274,7 @@ export function RoleShell({ children }: { children: React.ReactNode }) {
                   key={`${item.label}-${idx}`}
                   item={item}
                   active={active}
-                  onClick={() => { setView(item.view); setMobileOpen(false); }}
+                  onClick={handleNav}
                 />
               );
             })}
@@ -446,13 +462,25 @@ export function RoleGreetingBanner({ role }: { role: AdminRole }) {
         <p className="heading-lg">{preset.title}</p>
         <p className="body-sm text-white/80 mt-1">{preset.body}</p>
       </div>
-      <button
-        onClick={() => useAppStore.getState().setView("admin-match-control")}
-        className="ml-auto hidden md:inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#F4C400] text-[#084C2A] font-bold body-sm hover:brightness-110 transition"
-        style={{ minHeight: 40 }}
-      >
-        Ale nan match <ChevronRight size={14} />
-      </button>
+      {/* live_operator's primary action is the broadcast studio (camera
+          slots); other roles go to the match control page. */}
+      {role === "live_operator" ? (
+        <a
+          href="/operator/control"
+          className="ml-auto hidden md:inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#F4C400] text-[#084C2A] font-bold body-sm hover:brightness-110 transition"
+          style={{ minHeight: 40 }}
+        >
+          <Radio size={14} /> Ouvri estidyo a <ChevronRight size={14} />
+        </a>
+      ) : (
+        <button
+          onClick={() => useAppStore.getState().setView("admin-match-control")}
+          className="ml-auto hidden md:inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#F4C400] text-[#084C2A] font-bold body-sm hover:brightness-110 transition"
+          style={{ minHeight: 40 }}
+        >
+          Ale nan match <ChevronRight size={14} />
+        </button>
+      )}
     </div>
   );
 }

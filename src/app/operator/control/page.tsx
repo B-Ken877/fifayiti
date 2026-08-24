@@ -346,7 +346,18 @@ export default function OperatorPage() {
     <div className="min-h-screen bg-[#053319] text-white flex flex-col">
       <header className="bg-[#084C2A] border-b border-fifayiti-line sticky top-0 z-30">
         <div className="max-w-[1600px] mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          <BrandMark size="sm" variant="white" />
+          <div className="flex items-center gap-3">
+            <a
+              href="/?view=admin-dashboard"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+              style={{ minHeight: 36 }}
+              aria-label="Retounen nan administrasyon"
+            >
+              <ChevronRight size={14} className="text-white rotate-180" />
+              <span className="eyebrow text-white hidden sm:inline">Administrasyon</span>
+            </a>
+            <BrandMark size="sm" variant="white" />
+          </div>
           <div className="flex items-center gap-3">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: connected ? "#116B3A" : "#D92D20" }}>
               {connected ? <Wifi size={14} /> : <WifiOff size={14} />}
