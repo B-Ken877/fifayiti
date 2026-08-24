@@ -787,3 +787,19 @@ Stage Summary:
 - Streamlabs guidance tuned for Haitian mobile networks
 - Recommendation given to user: US-East VPS would cut RTT from ~460-700ms to ~80-120ms (biggest structural improvement for WebRTC quality)
 
+---
+Task ID: 13
+Agent: Super Z (main agent)
+Task: User: "Still big delays. WebRTC was way better" — make WebRTC the primary camera path
+
+Work Log:
+- User field-tested both paths: browser WebRTC = fluid, Streamlabs RTMP = big delays. RTMP delay is structural (server-side GStreamer transcode buffers 3-10s) and cannot be reduced to WebRTC level
+- Camera page: added quality selector — "720p · FLUIT" (1280x720 @ 3 Mbps, default, for Natcom/Digicel mobile data) vs "1080p · HD" (1920x1080 @ 6 Mbps, Wi-Fi/fiber). Start button now says "(720p Fluit · WebRTC)". Live badge + sidebar config card reflect the selected quality. Lower default bitrate stops uplink flooding before congestion control adapts
+- Streamlabs panel demoted: header now "sekou sèlman" (backup only), red warning box explains the 3-10s transcode delay and points to the WebRTC start button as the low-latency option (~1s)
+- OBS panel header clarified: "WHIP, ti reta" (OBS over WHIP stays WebRTC end-to-end — no transcode when bypassTranscoding)
+- Deployed, verified, git pushed
+
+Stage Summary:
+- WebRTC browser broadcast is the documented primary path for phone cameramen; Streamlabs = emergency backup only
+- Default publish quality tuned for Haitian mobile upload (720p/3Mbps) with HD toggle for good connections
+

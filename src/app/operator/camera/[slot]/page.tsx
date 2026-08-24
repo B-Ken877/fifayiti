@@ -37,6 +37,39 @@ export default function CameraPage() {
 
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
+  // ── Quality selector ─────────────────────────────────────
+  // User feedback (2026-08-24 field test): WebRTC is far more fluid than
+  // RTMP on Haitian mobile networks — so the BROWSER broadcast is the
+  // primary path, and the bitrate must fit mobile upload capacity.
+  //   fluid (default) — 720p @ 3 Mbps: holds up on Natcom/Digicel data
+  //   hd              — 1080p @ 6 Mbps: for Wi-Fi / fiber only
+  const [quality, setQuality] = useState<"fluid" | "hd">("fluid");
+  const QUALITY = quality === "hd"
+    ? { w: 1920, h: 1080, bitrate: 6_000_000, label: "1080p HD" }
+    : { w: 1280, h: 720, bitrate: 3_000_000, label: "720p Fluit" };
+
+  // ── Quality selector ─────────────────────────────────────
+  // User feedback (2026-08-24 field test): WebRTC is far more fluid than
+  // RTMP on Haitian mobile networks — so the BROWSER broadcast is the
+  // primary path, and the bitrate must fit mobile upload capacity.
+  //   fluid (default) — 720p @ 3 Mbps: holds up on Natcom/Digicel data
+  //   hd              — 1080p @ 6 Mbps: for Wi-Fi / fiber only
+  const [quality, setQuality] = useState<"fluid" | "hd">("fluid");
+  const QUALITY = quality === "hd"
+    ? { w: 1920, h: 1080, bitrate: 6_000_000, label: "1080p HD" }
+    : { w: 1280, h: 720, bitrate: 3_000_000, label: "720p Fluit" };
+
+  // ── Quality selector ──────────────────────────────────────────────
+  // User feedback (2026-08-24 field test): WebRTC is far more fluid than
+  // RTMP on Haitian mobile networks — so the BROWSER broadcast is the
+  // primary path, and the bitrate must fit mobile upload capacity.
+  //   fluid (default) — 720p @ 3 Mbps: holds up on Natcom/Digicel data
+  //   hd              — 1080p @ 6 Mbps: for Wi-Fi / fiber only
+  const [quality, setQuality] = useState<"fluid" | "hd">("fluid");
+  const QUALITY = quality === "hd"
+    ? { w: 1920, h: 1080, bitrate: 6_000_000, label: "1080p HD" }
+    : { w: 1280, h: 720, bitrate: 3_000_000, label: "720p Fluit" };
+
   // Pull the trusted role from /api/auth/me so we can greet the
   // cameraman by their account name (cameraman1 / cameraman2 / cameraman3
   // / cameraman — legacy). This is display only; the middleware
@@ -149,7 +182,7 @@ export default function CameraPage() {
       // bandwidth can handle.
       const localTracks = await createLocalTracks({
         video: {
-          resolution: { width: 1920, height: 1080, frameRate: 30 },
+          resolution: { width: QUALITY.w, height: QUALITY.h, frameRate: 30 },
           facingMode: "environment",
         },
         audio: false,
@@ -210,7 +243,7 @@ export default function CameraPage() {
         //   was silently ignored, leaving the bitrate at default.
         publishDefaults: {
           videoCodec: "h264",
-          videoEncoding: { maxBitrate: 6_000_000, maxFramerate: 30 },
+          videoEncoding: { maxBitrate: QUALITY.bitrate, maxFramerate: 30 },
           simulcast: true,
           videoSimulcastLayers: [VideoPresets.h540, VideoPresets.h360],
         },
@@ -243,7 +276,7 @@ export default function CameraPage() {
       } catch (pubErr) {
         console.warn("[camera] publishTracks failed, trying setCameraEnabled:", pubErr);
         await room.localParticipant.setCameraEnabled(true, {
-          resolution: { width: 1920, height: 1080, frameRate: 30 },
+          resolution: { width: QUALITY.w, height: QUALITY.h, frameRate: 30 },
           facingMode: "environment",
         });
         console.log("[camera] camera enabled via setCameraEnabled");
@@ -351,11 +384,11 @@ export default function CameraPage() {
                     <span className="eyebrow text-white">{isBroadcasting ? "● AN DIRÈK SOU TV" : "AP TRANSMET"}</span>
                   </div>
                   <div className="absolute top-3 right-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/70 backdrop-blur-md">
-                    <span className="eyebrow text-[#F4C400]">HD</span>
+                    <span className="eyebrow text-[#F4C400]">{quality === "hd" ? "HD" : "FLUIT"}</span>
                     <span className="eyebrow text-white/40">·</span>
-                    <span className="eyebrow text-white/60">1080p</span>
+                    <span className="eyebrow text-white/60">{quality === "hd" ? "1080p" : "720p"}</span>
                     <span className="eyebrow text-white/40">·</span>
-                    <span className="eyebrow text-white/60">6Mbps</span>
+                    <span className="eyebrow text-white/60">{quality === "hd" ? "6" : "3"}Mbps</span>
                     <Eye size={12} className="text-white/70 ml-2" />
                     <span className="eyebrow text-white tnum">{viewerCount}</span>
                   </div>
@@ -364,10 +397,38 @@ export default function CameraPage() {
             </div>
 
             {status !== "live" ? (
+              <>
+              {/* Quality selector — fluid-first. 720p/3Mbps holds up on
+                  Haitian mobile data; 1080p/6Mbps is for Wi-Fi/fiber. */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setQuality("fluid")}
+                  className={quality === "fluid"
+                    ? "flex-1 rounded-xl px-3 py-2 font-bold transition-all border-2"
+                    : "flex-1 rounded-xl px-3 py-2 font-bold transition-all border-2 border-fifayiti-line bg-black/20 text-white/60 hover:text-white"}
+                  style={quality === "fluid" ? { background: "#F4C400", color: "#053319", borderColor: "#F4C400", minHeight: 48 } : { minHeight: 48 }}
+                  aria-pressed={quality === "fluid"}
+                >
+                  <span className="eyebrow block">720p · FLUIT</span>
+                  <span className="text-[10px] opacity-70">Rekòmande — done mobil</span>
+                </button>
+                <button
+                  onClick={() => setQuality("hd")}
+                  className={quality === "hd"
+                    ? "flex-1 rounded-xl px-3 py-2 font-bold transition-all border-2"
+                    : "flex-1 rounded-xl px-3 py-2 font-bold transition-all border-2 border-fifayiti-line bg-black/20 text-white/60 hover:text-white"}
+                  style={quality === "hd" ? { background: "#F4C400", color: "#053319", borderColor: "#F4C400", minHeight: 48 } : { minHeight: 48 }}
+                  aria-pressed={quality === "hd"}
+                >
+                  <span className="eyebrow block">1080p · HD</span>
+                  <span className="text-[10px] opacity-70">Sèlman Wi-Fi / fib</span>
+                </button>
+              </div>
               <button onClick={startBroadcast} disabled={status === "requesting"} className="w-full btn-featured" style={{ minHeight: 56 }}>
                 <Camera size={18} />
-                {status === "requesting" ? (step || "Ap mande aksè...") : "Kòmanse retransmisyon (HD)"}
+                {status === "requesting" ? (step || "Ap mande aksè...") : `Kòmanse retransmisyon (${QUALITY.label} · WebRTC)`}
               </button>
+              </>
             ) : (
               <button onClick={stopBroadcast} className="w-full rounded-xl font-bold transition-all hover:brightness-110" style={{ background: "#D92D20", color: "#FFFFFF", minHeight: 56 }}>
                 <CameraOff size={18} className="inline mr-2" /> Kanpe retransmisyon
@@ -393,15 +454,23 @@ export default function CameraPage() {
               >
                 <div className="flex items-center gap-2">
                   <Smartphone size={16} className="text-[#F4C400]" />
-                  <span className="eyebrow text-[#F4C400]">POU STREAMLABS (telefòn — rekòmande)</span>
+                  <span className="eyebrow text-[#F4C400]">POU STREAMLABS (telefòn — sekou sèlman)</span>
                 </div>
                 {slPanelOpen ? <ChevronDown size={16} className="text-white/60" /> : <ChevronRight size={16} className="text-white/60" />}
               </button>
 
               {slPanelOpen && (
                 <div className="mt-4 space-y-4">
+                  <div className="rounded-lg p-3 border border-[#D92D20]/40 bg-[#D92D20]/10">
+                    <p className="body-sm text-white/80 leading-relaxed">
+                      <strong className="text-[#D92D20]">⚠ ATANSYON — GWO RETA:</strong> Streamlabs apoloji RTMP. Sèvè a dwe transkode li anvan li rive sou TV — sa kreye <strong>3–10 segond reta</strong> e li ka grandi si rezo a fèb.
+                    </p>
+                    <p className="body-sm text-white/70 mt-2 leading-relaxed">
+                      Pou reta ki pi piti (~1 segond), sèvi ak bouton <strong>“Kòmanse retransmisyon”</strong> ki anlè a — se WebRTC menm jan ak yon apèl videyo, e li te pi fluid nan tès ou yo.
+                    </p>
+                  </div>
                   <p className="body-sm text-white/80 leading-relaxed">
-                    <strong>Streamlabs</strong> se pi bon opsyon pou telefòn nan: li konbine <strong>Wi-Fi ak done selilè</strong> ansanm (Network Boost), li rekonèkte otomatik lè rezo a tonbe, e li gen yon ansèyman videyo pi fò pase navigatè a. Telechaje li sou Play Store oswa App Store.
+                    Sèvi ak <strong>Streamlabs</strong> sèlman kòm <strong>sekou</strong> — si navigatè a pa ka difize sou telefòn nan (kamè bloke, telefòn twò vye). Avantaj li: li konbine Wi-Fi ak done selilè ansanm (Network Boost) e li rekonèkte otomatik lè rezo a tonbe.
                   </p>
 
                   {/* Step 1 — get credentials */}
@@ -529,7 +598,7 @@ export default function CameraPage() {
               >
                 <div className="flex items-center gap-2">
                   <Monitor size={16} className="text-[#F4C400]" />
-                  <span className="eyebrow text-[#F4C400]">POU OBS STUDIO (òdinatè)</span>
+                  <span className="eyebrow text-[#F4C400]">POU OBS STUDIO (òdinatè — WHIP, ti reta)</span>
                 </div>
                 {obsPanelOpen ? <ChevronDown size={16} className="text-white/60" /> : <ChevronRight size={16} className="text-white/60" />}
               </button>
@@ -669,8 +738,8 @@ export default function CameraPage() {
             <div className="fifayiti-card-dark p-4">
               <p className="eyebrow text-[#F4C400] mb-3">Konfigirasyon HD</p>
               <div className="space-y-2 text-sm">
-                <div className="flex justify-between text-white/80"><span>Rezolisyon</span><span className="text-white font-mono">1920×1080</span></div>
-                <div className="flex justify-between text-white/80"><span>Bitrate</span><span className="text-white font-mono">6 Mbps</span></div>
+                <div className="flex justify-between text-white/80"><span>Rezolisyon</span><span className="text-white font-mono">{quality === "hd" ? "1920×1080" : "1280×720"}</span></div>
+                <div className="flex justify-between text-white/80"><span>Bitrate</span><span className="text-white font-mono">{quality === "hd" ? "6" : "3"} Mbps</span></div>
                 <div className="flex justify-between text-white/80"><span>Kòdèk</span><span className="text-white font-mono">H.264</span></div>
                 <div className="flex justify-between text-white/80"><span>Simulcast</span><span className="text-[#116B3A] font-mono">AKTIVE</span></div>
                 <div className="flex justify-between text-white/80"><span>TURN (relè CGNAT)</span><span className="text-[#116B3A] font-mono">AKTIVE</span></div>
