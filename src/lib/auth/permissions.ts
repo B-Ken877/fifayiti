@@ -1,22 +1,16 @@
-"use client";
-/**
- * Permission system — client-side role/permission matrix for UX gating.
- *
- * PILOT ONLY — this is a client-side permission helper for UX gating. Real
- * authorization MUST be enforced server-side. Use this only to hide/show
- * UI; the backend MUST independently verify permissions on every
- * privileged operation.
- *
- * The role value comes from `useAuthSessionStore` (also PILOT ONLY — see
- * `src/store/auth-session-store.ts` JSDoc). In production, the role will
- * come from a server-issued session token / NextAuth session.
- *
- * Permission matrix (spec section 38):
- *   - president     → ALL permissions (full superuser)
- *   - director      → everything except `admins.manage` and `schedule.approve`
- *   - live_operator → match + replay operational permissions only
- *   - team_admin    → view-only on teams/players/schedule (own team in prod)
- */
+// Permission system — pure types + matrix (server-safe, no client imports).
+//
+// Originally this file was "use client" because the `usePermission` hook
+// was colocated. That made it impossible to import from server code
+// (API routes, middleware) without dragging React in. Now this file is
+// pure data + pure functions; the React hook lives in
+// `src/lib/auth/use-permission.ts` (client-only).
+//
+// PILOT CAVEAT: the matrix here matches the spec, but the server MUST
+// independently verify role + permission on every privileged operation.
+// `hasPermission(role, perm)` here is the canonical source — both
+// client (via usePermission) and server (via API route handlers) call
+// into this.
 
 export type Permission =
   | "competition.view" | "competition.manage"
@@ -30,7 +24,17 @@ export type Permission =
   | "admins.view" | "admins.manage"
   | "settings.view" | "settings.manage";
 
-export type Role = "president" | "director" | "live_operator" | "team_admin";
+// Roles — `cameraman` is new (camera-streaming operator role).
+// `live_operator` runs the broadcast control desk (slot/preview picker,
+// score panel, broadcast on/off). `cameraman` connects a single camera
+// feed to LiveKit. Both can read matches; cameraman has no admin
+// workspace access (they never see the SPA).
+export type Role =
+  | "president"
+  | "director"
+  | "live_operator"
+  | "cameraman"
+  | "team_admin";
 
 const ALL_PERMISSIONS: Permission[] = [
   "competition.view", "competition.manage",
@@ -45,15 +49,6 @@ const ALL_PERMISSIONS: Permission[] = [
   "settings.view", "settings.manage",
 ];
 
-/**
- * Role → permission matrix.
- *
- * `president` gets every permission (full superuser). `director` gets most
- * but cannot approve schedules (`schedule.approve` is president-only per
- * spec) and cannot manage admins (`admins.manage`). `live_operator` is
- * scoped to live-match operations and replays. `team_admin` is view-only
- * on teams/players/schedule (own-team scoping is enforced server-side).
- */
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   president: [...ALL_PERMISSIONS],
   director: [
@@ -72,6 +67,9 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "matches.view", "matches.control", "matches.correct",
     "replays.view", "replays.manage",
   ],
+  cameraman: [
+    "matches.view", // read-only — just needs to know which slot is "on TV"
+  ],
   team_admin: [
     "teams.view",
     "players.view",
@@ -79,49 +77,10 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   ],
 };
 
-/**
- * Returns true if the given role is granted the given permission.
- *
- * NOTE: This is a client-side helper for UX gating ONLY. The backend
- * MUST independently verify the role (via the session token / DB lookup)
- * on every privileged operation. A user can spoof their role in the
- * client store — never trust it for authorization.
- */
 export function hasPermission(role: Role, permission: Permission): boolean {
   return ROLE_PERMISSIONS[role]?.includes(permission) ?? false;
 }
 
-/**
- * Returns true if the role is granted ANY of the given permissions.
- * Useful for "show this nav item if the user has at least one related
- * permission" checks.
- */
 export function hasAnyPermission(role: Role, permissions: Permission[]): boolean {
   return permissions.some((p) => hasPermission(role, p));
-}
-
-/**
- * React hook that reads the current `adminRole` from `useAuthSessionStore`
- * and returns `hasPermission(role, permission)`.
- *
- * Re-render-safe: it subscribes to the auth-session store, so the result
- * updates immediately if the role changes mid-session (e.g. after login).
- *
- * See file-level JSDoc for the pilot-only caveat.
- */
-import { useAuthSessionStore, type AdminRole } from "@/store/auth-session-store";
-
-export function usePermission(permission: Permission): boolean {
-  const adminRole = useAuthSessionStore((s) => s.adminRole);
-  return hasPermission(adminRole, permission);
-}
-
-/**
- * Convenience hook returning the raw role from the auth-session store.
- * Prefer `usePermission(permission)` for gating — this is provided for
- * components that need to render different labels (e.g. "Prezidan" vs
- * "Direktè") based on role.
- */
-export function useRole(): AdminRole {
-  return useAuthSessionStore((s) => s.adminRole);
 }

@@ -1,5 +1,6 @@
 "use client";
 import { useAppStore, type ViewKey } from "@/store/app-store";
+import { useAuthSessionStore, type AdminRole } from "@/store/auth-session-store";
 import { BrandMark } from "../brand-mark";
 import {
   LayoutDashboard,
@@ -58,21 +59,30 @@ const PAGE_TITLES: Record<string, string> = {
   tv: "FIFAYITI TV",
 };
 
+const ROLE_AVATAR: Record<AdminRole, string> = {
+  president: "PR",
+  director: "DK",
+  live_operator: "OP",
+  cameraman: "CM",
+  team_admin: "TA",
+};
+
+const ROLE_LABEL: Record<AdminRole, string> = {
+  president: "Prezidan FIFAYITI",
+  director: "Direktè Konpetisyon",
+  live_operator: "Operatè live",
+  cameraman: "Kameraman",
+  team_admin: "Administratè ekip",
+};
+
 export function AdminShell({ children }: { children: React.ReactNode }) {
-  const {
-    view,
-    setView,
-    setAdminAuthed,
-    adminRole,
-    online,
-    pendingSync,
-  } = useAppStore();
+  const { view, setView } = useAppStore();
+  const { adminRole, setAdminAuthed, syncFromServer } = useAuthSessionStore();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeCompName, setActiveCompName] = useState<string | null>(null);
   const title = PAGE_TITLES[view] ?? "Administrasyon";
 
-  // Fetch the active competition name once on mount so the top bar reflects
-  // the real competition (was hardcoded "FIFAYITI Koup Tikan 2026").
+  // Fetch the active competition name once on mount.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -86,9 +96,12 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
-  const logout = () => {
+  const logout = async () => {
+    try { await fetch("/api/auth/logout", { method: "POST" }); } catch {}
     setAdminAuthed(false);
     setView("home");
+    // Hard reload to clear any stale client-side state.
+    window.location.href = "/";
   };
 
   return (
@@ -177,21 +190,10 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             </span>
           </div>
 
-          {/* Sync indicator */}
+          {/* Sync indicator (legacy offline indicator kept for parity) */}
           <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#F4F7F3]">
-            {online ? (
-              <>
-                <Cloud size={14} className="text-[#116B3A]" />
-                <span className="meta font-semibold text-[#116B3A]">Senkronize</span>
-              </>
-            ) : (
-              <>
-                <WifiOff size={14} className="text-[#F4C400]" />
-                <span className="meta font-semibold text-[#F4C400]">
-                  Offline · <span className="tnum">{pendingSync}</span> an atant
-                </span>
-              </>
-            )}
+            <Cloud size={14} className="text-[#116B3A]" />
+            <span className="meta font-semibold text-[#116B3A]">Senkronize</span>
           </div>
 
           <button
@@ -206,13 +208,13 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           {/* Profile */}
           <div className="flex items-center gap-2 pl-2">
             <div className="w-9 h-9 rounded-full bg-[#116B3A] flex items-center justify-center text-white text-xs font-bold">
-              {adminRole === "president" ? "PR" : adminRole === "director" ? "DK" : "OP"}
+              {ROLE_AVATAR[adminRole] ?? "AD"}
             </div>
             <div className="hidden md:block leading-none">
               <p className="body-sm font-bold text-[#084C2A]">
-                {adminRole === "president" ? "Prezidan FIFAYITI" : adminRole === "director" ? "Direktè Konpetisyon" : "Operatè live"}
+                {ROLE_LABEL[adminRole] ?? "Administratè"}
               </p>
-              <p className="meta text-[#667085] mt-0.5">@fifayiti.ht</p>
+              <p className="meta text-[#667085] mt-0.5">@fifayiti.com</p>
             </div>
           </div>
         </header>

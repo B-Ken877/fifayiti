@@ -1,15 +1,16 @@
 "use client";
-// In-SPA login form — rendered at view="admin-login" (e.g. when user clicks
-// the "Antre" button on the public site header). For direct URL access to
-// /operator/* a standalone /login route exists with its own page component
-// (src/components/fifayiti/admin/login-page.tsx). Both forms hit the same
-// /api/auth/login endpoint.
+
+// Standalone login form rendered at the /login route.
+// Differences vs the in-SPA <AdminLogin />:
+//   - Posts to /api/auth/login (real server-side credential check).
+//   - Redirects via window.location.href on success (so middleware-
+//     protected routes can resume) rather than flipping a zustand view.
+//   - Lists ALL 5 roles with their emails (passwords are the role +
+//     "fifAYITI.com", documented in plain Creole to operators).
 
 import { useState } from "react";
 import { Lock, Mail, ShieldCheck, Eye, EyeOff } from "lucide-react";
 import { BrandMark } from "../brand-mark";
-import { useAppStore } from "@/store/app-store";
-import { useAuthSessionStore } from "@/store/auth-session-store";
 import { useToast } from "@/hooks/use-toast";
 
 const ROLE_HINTS: Array<{ role: string; email: string; label: string }> = [
@@ -20,9 +21,7 @@ const ROLE_HINTS: Array<{ role: string; email: string; label: string }> = [
   { role: "team_admin",    email: "team_admin@fifayiti.com",    label: "Administratè ekip" },
 ];
 
-export function AdminLogin() {
-  const { setView } = useAppStore();
-  const { syncFromServer } = useAuthSessionStore();
+export function AdminLoginPage() {
   const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [pwd, setPwd] = useState("");
@@ -61,19 +60,16 @@ export function AdminLogin() {
         });
         return;
       }
-      // Server set the session cookie. Pull the trusted role into the store
-      // and route to dashboard (or to public site for cameraman, who has
-      // no admin SPA access — they only use /operator/camera/[slot]).
-      await syncFromServer();
+      // Server set the session cookie. Redirect to the SPA root so the
+      // SPA picks up the session via /api/auth/me and routes to admin.
       toast({
         title: "Byenveni",
         description: "Ou konektye nan administrasyon FIFAYITI.",
       });
-      if (data.role === "cameraman") {
-        setView("home");
-      } else {
-        setView("admin-dashboard");
-      }
+      const params = new URLSearchParams(window.location.search);
+      const next = params.get("next") || "/";
+      // Hard navigation so the SPA reboots with a fresh /api/auth/me fetch.
+      window.location.href = next;
     } catch (err) {
       toast({
         title: "Erè rezo",
@@ -157,7 +153,7 @@ export function AdminLogin() {
             </button>
           </form>
 
-          {/* Credential reference — click to autofill */}
+          {/* Credential reference — documented in Creole for operators */}
           <div className="mt-6 pt-5 border-t border-[#E4E7EC]">
             <p className="eyebrow text-[#667085] mb-2">
               Kont ou ka itilize
@@ -186,60 +182,15 @@ export function AdminLogin() {
                 Modpas se: <span className="font-mono text-[11px]">[wòl]fifAYITI.com</span>
               </p>
             </div>
-
-            {/* Quick-access operator camera sessions — bypass login
-                because operator pages require cameraman/live_operator
-                role session cookie. Clicking should hit /login first. */}
-            <div className="mt-3 rounded-lg p-3" style={{ background: "#084C2A" }}>
-              <p className="eyebrow text-[#F4C400] mb-2">
-                Sesyon Kamera & Broadcast
-              </p>
-              <p className="meta text-white/70 mb-3">
-                Konekte tankou kameraman anvan yo ka louvri:
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                <a
-                  href="/login?next=/operator/camera/1"
-                  className="block text-center px-3 py-2 rounded-md body-sm font-bold transition-colors"
-                  style={{ background: "#116B3A", color: "#FFFFFF" }}
-                >
-                  Kamera 1
-                </a>
-                <a
-                  href="/login?next=/operator/camera/2"
-                  className="block text-center px-3 py-2 rounded-md body-sm font-bold transition-colors"
-                  style={{ background: "#116B3A", color: "#FFFFFF" }}
-                >
-                  Kamera 2
-                </a>
-                <a
-                  href="/login?next=/operator/camera/3"
-                  className="block text-center px-3 py-2 rounded-md body-sm font-bold transition-colors"
-                  style={{ background: "#116B3A", color: "#FFFFFF" }}
-                >
-                  Kamera 3
-                </a>
-                <a
-                  href="/login?next=/operator/control"
-                  className="block text-center px-3 py-2 rounded-md body-sm font-bold transition-colors"
-                  style={{ background: "#F4C400", color: "#084C2A" }}
-                >
-                  Operatè (TV)
-                </a>
-              </div>
-              <p className="meta text-white/40 mt-3 text-center">
-                3 kamera + 1 operatè = retransmisyon an dirèk
-              </p>
-            </div>
           </div>
         </div>
 
-        <button
-          onClick={() => setView("home")}
-          className="mt-4 mx-auto block meta font-semibold text-white/70 hover:text-white"
+        <a
+          href="/"
+          className="mt-4 mx-auto block meta font-semibold text-white/70 hover:text-white text-center"
         >
           ← Retounen sou sit piblik
-        </button>
+        </a>
       </div>
     </div>
   );
