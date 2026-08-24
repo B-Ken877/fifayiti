@@ -1,9 +1,9 @@
 "use client";
 import { useRef, useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { Room, RoomEvent, Track, createLocalTracks } from "livekit-client";
+import { Room, RoomEvent, Track, createLocalTracks, VideoPresets } from "livekit-client";
 import { BrandMark } from "@/components/fifayiti/brand-mark";
-import { Camera, CameraOff, Radio, Wifi, WifiOff, Users, Eye, AlertCircle, LogOut, UserCircle } from "lucide-react";
+import { Camera, CameraOff, Radio, Wifi, WifiOff, Users, Eye, AlertCircle, LogOut, UserCircle, Copy, Check, Monitor, Smartphone, ChevronDown, ChevronRight } from "lucide-react";
 
 export default function CameraPage() {
   const params = useParams<{ slot: string }>();
@@ -21,6 +21,21 @@ export default function CameraPage() {
   const [operatorOnline, setOperatorOnline] = useState(false);
   const [connected, setConnected] = useState(false);
   const [cameramanRole, setCameramanRole] = useState<string>("");
+
+  // OBS WHIP integration state
+  const [obsPanelOpen, setObsPanelOpen] = useState(false);
+  const [whipUrl, setWhipUrl] = useState<string>("");
+  const [whipToken, setWhipToken] = useState<string>("");
+  const [tokenLoading, setTokenLoading] = useState(false);
+
+  // Streamlabs RTMP integration state
+  const [slPanelOpen, setSlPanelOpen] = useState(false);
+  const [slName, setSlName] = useState<string>("");
+  const [rtmpUrl, setRtmpUrl] = useState<string>("");
+  const [rtmpKey, setRtmpKey] = useState<string>("");
+  const [rtmpLoading, setRtmpLoading] = useState(false);
+
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // Pull the trusted role from /api/auth/me so we can greet the
   // cameraman by their account name (cameraman1 / cameraman2 / cameraman3
@@ -43,6 +58,75 @@ export default function CameraPage() {
     window.location.href = "/";
   };
 
+  // ───────────────────────────────────────────────────────────────────
+  // OBS WHIP integration — fetch a URL + stream key for OBS Studio
+  // ───────────────────────────────────────────────────────────────────
+  // Click "Jwenn lyen OBS" → calls /api/livekit-whip-token → displays
+  // a WHIP URL + stream key the cameraman pastes into OBS Studio →
+  // Settings → Stream → Service: WHIP.
+  //
+  // Why this matters: OBS encodes video with x264/nvenc (CPU/GPU) instead
+  // of the browser's WebRTC encoder (which is tuned for video calls).
+  // Result: ~3× better quality at the same bitrate, and the cameraman
+  // can use real HDMI capture cards / camcorders instead of a phone cam.
+  // ───────────────────────────────────────────────────────────────────
+  const fetchWhipToken = async () => {
+    setTokenLoading(true);
+    try {
+      const r = await fetch("/api/livekit-whip-token", { cache: "no-store" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.error || "Pa ka jwenn token OBS");
+      setWhipUrl(d.whipUrl);
+      setWhipToken(d.token);
+      setObsPanelOpen(true);
+    } catch (e: any) {
+      setErrorMsg(`OBS: ${e.message}`);
+    } finally {
+      setTokenLoading(false);
+    }
+  };
+
+  // ───────────────────────────────────────────────────────────────────
+  // Streamlabs RTMP integration — fetch URL + stream key for the
+  // Streamlabs mobile app (Custom RTMP destination).
+  //
+  // Streamlabs bonds Wi-Fi + cellular ("Network Boost") and
+  // auto-reconnects — the most reliable option for stadium conditions
+  // on Haitian mobile data.
+  // ───────────────────────────────────────────────────────────────────
+  const fetchRtmpInfo = async () => {
+    setRtmpLoading(true);
+    try {
+      const r = await fetch("/api/livekit-rtmp-token", { cache: "no-store" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.error || "Pa ka jwenn enfòmasyon Streamlabs");
+      setSlName(d.name);
+      setRtmpUrl(d.rtmpUrl);
+      setRtmpKey(d.streamKey);
+      setSlPanelOpen(true);
+    } catch (e: any) {
+      setErrorMsg(`Streamlabs: ${e.message}`);
+    } finally {
+      setRtmpLoading(false);
+    }
+  };
+
+  const copyToClipboard = async (text: string, field: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch {
+      // Fallback for older browsers
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); setCopiedField(field); setTimeout(() => setCopiedField(null), 2000); } catch {}
+      document.body.removeChild(ta);
+    }
+  };
+
   if (![1, 2, 3].includes(slot)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#053319] p-4 text-white">
@@ -59,9 +143,15 @@ export default function CameraPage() {
     setErrorMsg("");
     setStep("1/5: Mande aksè kamè...");
     try {
-      // 1. Get camera permission + create tracks
+      // ── HD + fluid retransmission upgrade ───────────────────────────
+      // 1080p capture. The Room publishDefaults below enable simulcast
+      // (3 spatial layers) so the TV client picks the best layer its
+      // bandwidth can handle.
       const localTracks = await createLocalTracks({
-        video: { resolution: { width: 1280, height: 720 }, facingMode: "environment" },
+        video: {
+          resolution: { width: 1920, height: 1080, frameRate: 30 },
+          facingMode: "environment",
+        },
         audio: false,
       });
       console.log("[camera] tracks created:", localTracks.length);
@@ -73,15 +163,11 @@ export default function CameraPage() {
       }
 
       // ─── Wake lock: prevent the phone screen from turning off ───
-      // This keeps the browser tab alive while broadcasting.
-      // Without it, the phone OS kills the tab after ~1 min of inactivity,
-      // which disconnects the cameraman from LiveKit.
       try {
         if ("wakeLock" in navigator) {
           const wakeLock = await (navigator as any).wakeLock.request("screen");
           wakeLockRef.current = wakeLock;
           console.log("[camera] wake lock acquired");
-          // Re-acquire on visibility change (wake lock is released when tab is hidden)
           document.addEventListener("visibilitychange", async () => {
             if (document.visibilityState === "visible" && wakeLockRef.current === null) {
               try {
@@ -95,7 +181,7 @@ export default function CameraPage() {
         console.warn("[camera] wake lock not available:", e);
       }
 
-      // 2. Get token
+      // 2. Get token (response includes TURN servers for CGNAT cameramen)
       setStep("2/5: Konekte ak sèv LiveKit...");
       const tokenRes = await fetch("/api/livekit-token", {
         method: "POST",
@@ -103,39 +189,61 @@ export default function CameraPage() {
         body: JSON.stringify({ roomName: "fifayiti-broadcast", participantName: `camera-${slot}`, role: "cameraman" }),
       });
       if (!tokenRes.ok) throw new Error("Pa ka jwenn token");
-      const { token, wsUrl } = await tokenRes.json();
+      const { token, wsUrl, turnServers } = await tokenRes.json();
       console.log("[camera] token received");
 
       // 3. Connect to room
       setStep("3/5: Konekte ak chanm...");
       const room = new Room({
-        adaptiveStrategy: "adaptiveStreaming",
         dynacast: true,
-        publishDefaults: { videoCodec: "h264", videoBitRate: 1_500_000 },
+        // ── HD publish defaults ──
+        // • videoCodec: "h264" — better hardware acceleration than VP8
+        // • videoEncoding: 6 Mbps — the broadcast floor for 1080p30
+        //   sports H.264 (was ~1.5 Mbps default). If the cameraman's
+        //   upload can't push it, LiveKit's congestion control backs off.
+        // • simulcast: true + videoSimulcastLayers — publishes
+        //   1080p/540p/360p. The TV client picks the best layer its
+        //   download bandwidth can handle. This is THE fix for the
+        //   "blurry / choppy" problem.
+        //   NOTE: the SDK field is videoEncoding (maxBitrate) — an
+        //   earlier revision used a non-existent `videoBitRate` key that
+        //   was silently ignored, leaving the bitrate at default.
+        publishDefaults: {
+          videoCodec: "h264",
+          videoEncoding: { maxBitrate: 6_000_000, maxFramerate: 30 },
+          simulcast: true,
+          videoSimulcastLayers: [VideoPresets.h540, VideoPresets.h360],
+        },
       });
       roomRef.current = room;
 
       room.on(RoomEvent.ParticipantConnected, () => updateStats());
       room.on(RoomEvent.ParticipantDisconnected, () => updateStats());
-      // The operator publishes { role: "operator", selectedSlot } on its own
-      // participant metadata whenever the on-air slot changes — re-check our
-      // "AN DIRÈK SOU TV" indicator when that happens.
       room.on(RoomEvent.ParticipantMetadataChanged, () => updateStats());
       room.on(RoomEvent.Connected, () => { setConnected(true); });
 
-      await room.connect(wsUrl, token);
+      // TURN relay for cameramen behind carrier-grade NAT (Natcom /
+      // Digicel mobile data): pass the time-limited credentials from
+      // /api/livekit-token as the RTCPeerConnection iceServers.
+      await room.connect(wsUrl, token, {
+        rtcConfig: {
+          iceServers:
+            Array.isArray(turnServers) && turnServers.length
+              ? turnServers
+              : [{ urls: "stun:stun.l.google.com:19302" }],
+        },
+      });
       console.log("[camera] room connected");
 
       // 4. Publish tracks
       setStep("4/5: Pibliye videyo a...");
       try {
         await room.localParticipant.publishTracks(localTracks);
-        console.log("[camera] tracks published");
+        console.log("[camera] tracks published (simulcast on)");
       } catch (pubErr) {
         console.warn("[camera] publishTracks failed, trying setCameraEnabled:", pubErr);
-        // Fallback: use setCameraEnabled
         await room.localParticipant.setCameraEnabled(true, {
-          resolution: { width: 1280, height: 720 },
+          resolution: { width: 1920, height: 1080, frameRate: 30 },
           facingMode: "environment",
         });
         console.log("[camera] camera enabled via setCameraEnabled");
@@ -163,7 +271,6 @@ export default function CameraPage() {
         : e.name === "OverconstrainedError" ? "Kamè a pa sipòte rezolisyon sa a."
         : `${e.name}: ${e.message ?? "Erè enkonni"}`
       );
-      // Disconnect room if connected
       if (roomRef.current) {
         try { roomRef.current.disconnect(); } catch {}
         roomRef.current = null;
@@ -244,8 +351,11 @@ export default function CameraPage() {
                     <span className="eyebrow text-white">{isBroadcasting ? "● AN DIRÈK SOU TV" : "AP TRANSMET"}</span>
                   </div>
                   <div className="absolute top-3 right-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/70 backdrop-blur-md">
-                    <span className="eyebrow text-white/60">FPS:</span>
-                    <span className="eyebrow text-white tnum">30</span>
+                    <span className="eyebrow text-[#F4C400]">HD</span>
+                    <span className="eyebrow text-white/40">·</span>
+                    <span className="eyebrow text-white/60">1080p</span>
+                    <span className="eyebrow text-white/40">·</span>
+                    <span className="eyebrow text-white/60">6Mbps</span>
                     <Eye size={12} className="text-white/70 ml-2" />
                     <span className="eyebrow text-white tnum">{viewerCount}</span>
                   </div>
@@ -256,7 +366,7 @@ export default function CameraPage() {
             {status !== "live" ? (
               <button onClick={startBroadcast} disabled={status === "requesting"} className="w-full btn-featured" style={{ minHeight: 56 }}>
                 <Camera size={18} />
-                {status === "requesting" ? (step || "Ap mande aksè...") : "Kòmanse retransmisyon"}
+                {status === "requesting" ? (step || "Ap mande aksè...") : "Kòmanse retransmisyon (HD)"}
               </button>
             ) : (
               <button onClick={stopBroadcast} className="w-full rounded-xl font-bold transition-all hover:brightness-110" style={{ background: "#D92D20", color: "#FFFFFF", minHeight: 56 }}>
@@ -270,6 +380,278 @@ export default function CameraPage() {
                 <p className="body-sm text-white">{errorMsg}</p>
               </div>
             )}
+
+            {/* ── Streamlabs RTMP integration panel ─────────────────────── */}
+            {/* Streamlabs mobile app (Custom RTMP): bonds Wi-Fi + cellular,
+                auto-reconnects, real hardware encoder — the most reliable
+                camera option for Haitian stadium conditions. */}
+            <div className="fifayiti-card-dark p-4">
+              <button
+                onClick={() => setSlPanelOpen(!slPanelOpen)}
+                className="w-full flex items-center justify-between text-left"
+                aria-expanded={slPanelOpen}
+              >
+                <div className="flex items-center gap-2">
+                  <Smartphone size={16} className="text-[#F4C400]" />
+                  <span className="eyebrow text-[#F4C400]">POU STREAMLABS (telefòn — rekòmande)</span>
+                </div>
+                {slPanelOpen ? <ChevronDown size={16} className="text-white/60" /> : <ChevronRight size={16} className="text-white/60" />}
+              </button>
+
+              {slPanelOpen && (
+                <div className="mt-4 space-y-4">
+                  <p className="body-sm text-white/80 leading-relaxed">
+                    <strong>Streamlabs</strong> se pi bon opsyon pou telefòn nan: li konbine <strong>Wi-Fi ak done selilè</strong> ansanm (Network Boost), li rekonèkte otomatik lè rezo a tonbe, e li gen yon ansèyman videyo pi fò pase navigatè a. Telechaje li sou Play Store oswa App Store.
+                  </p>
+
+                  {/* Step 1 — get credentials */}
+                  <div className="space-y-1">
+                    <p className="eyebrow text-white/60">ETA 1 — Jwenn enfòmasyon ou yo</p>
+                    {!rtmpUrl ? (
+                      <button
+                        onClick={fetchRtmpInfo}
+                        disabled={rtmpLoading}
+                        className="w-full rounded-lg px-4 py-2 bg-[#F4C400] text-[#053319] font-bold transition-colors hover:brightness-110 disabled:opacity-50"
+                        style={{ minHeight: 40 }}
+                      >
+                        {rtmpLoading ? "Ap jwenn enfòmasyon..." : "Jwenn enfòmasyon Streamlabs mwen an"}
+                      </button>
+                    ) : (
+                      <div className="space-y-2">
+                        {/* Name field */}
+                        <div>
+                          <label className="eyebrow text-white/60 mb-1 block">Non (Name)</label>
+                          <div className="flex gap-2">
+                            <input
+                              readOnly
+                              value={slName}
+                              className="flex-1 rounded-lg bg-black/40 border border-fifayiti-line px-3 py-2 text-white text-sm font-mono"
+                            />
+                            <button
+                              onClick={() => copyToClipboard(slName, "sl-name")}
+                              className="px-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                              aria-label="Kopye non"
+                            >
+                              {copiedField === "sl-name" ? <Check size={16} className="text-[#116B3A]" /> : <Copy size={16} className="text-white" />}
+                            </button>
+                          </div>
+                        </div>
+                        {/* URL field */}
+                        <div>
+                          <label className="eyebrow text-white/60 mb-1 block">URL</label>
+                          <div className="flex gap-2">
+                            <input
+                              readOnly
+                              value={rtmpUrl}
+                              className="flex-1 rounded-lg bg-black/40 border border-fifayiti-line px-3 py-2 text-white text-sm font-mono"
+                            />
+                            <button
+                              onClick={() => copyToClipboard(rtmpUrl, "sl-url")}
+                              className="px-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                              aria-label="Kopye URL"
+                            >
+                              {copiedField === "sl-url" ? <Check size={16} className="text-[#116B3A]" /> : <Copy size={16} className="text-white" />}
+                            </button>
+                          </div>
+                        </div>
+                        {/* Stream key field */}
+                        <div>
+                          <label className="eyebrow text-white/60 mb-1 block">Kle (Stream Key)</label>
+                          <div className="flex gap-2">
+                            <input
+                              readOnly
+                              value={rtmpKey}
+                              className="flex-1 rounded-lg bg-black/40 border border-fifayiti-line px-3 py-2 text-white text-xs font-mono"
+                            />
+                            <button
+                              onClick={() => copyToClipboard(rtmpKey, "sl-key")}
+                              className="px-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                              aria-label="Kopye kle"
+                            >
+                              {copiedField === "sl-key" ? <Check size={16} className="text-[#116B3A]" /> : <Copy size={16} className="text-white" />}
+                            </button>
+                          </div>
+                        </div>
+                        <button
+                          onClick={fetchRtmpInfo}
+                          className="text-xs text-[#F4C400] hover:underline"
+                        >
+                          ↻ Refwèchi ( kle a menm pou tout match )
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Step 2 — configure Streamlabs */}
+                  <div className="space-y-1">
+                    <p className="eyebrow text-white/60">ETA 2 — Konfigure Streamlabs</p>
+                    <ol className="body-sm text-white/80 space-y-1.5 ml-5 list-decimal">
+                      <li>Ouvri Streamlabs → ale nan <strong>Settings</strong> (ikon roue)</li>
+                      <li>Chwazi <strong>Platforms</strong> → <strong>Custom RTMP</strong> (oswa <strong>RTMP Custom</strong>)</li>
+                      <li>Tape <strong>Name</strong>, <strong>URL</strong> ak <strong>Stream Key</strong> ki gen la a (itilize bouton kopye a)</li>
+                      <li>Nan <strong>Settings → Video</strong>:
+                        <ul className="ml-5 mt-1 list-disc text-white/70">
+                          <li>Rezolisyon: <strong>1080p</strong> (oswa <strong>720p</strong> si entènèt la fèb)</li>
+                          <li>Bitrate: <strong>4500–6000 Kbps</strong> si ou ka chanje li, oswa <strong>Auto</strong></li>
+                        </ul>
+                      </li>
+                      <li>Klike <strong>Go Live</strong> anvan match la kòmanse. Videyo a ap parèt sou FIFAYITI TV — operatè a chwazi kamera ou menm jan toujou.</li>
+                    </ol>
+                  </div>
+
+                  <div className="rounded-lg p-3 border border-[#F4C400]/30 bg-[#F4C400]/5 space-y-2">
+                    <p className="body-sm text-white/80">
+                      <strong className="text-[#F4C400]">Enpòtan:</strong> Pa kòmanse Streamlabs ak paj kamera navigatè a (oswa OBS) an menm tan. Yon sèl kamera pa slot. Si paj kamera a ap pibliye, klike <strong>Kanpe retransmisyon</strong> anvan ou klike Go Live nan Streamlabs.
+                    </p>
+                    <p className="body-sm text-white/60">
+                      Note: RTMP ajoute apeprè 2–5 segond reta — se nòmal. Si Network Boost mande abònman Ultra, ou ka difize san li tou.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {!slPanelOpen && (
+                <p className="body-sm text-white/60 mt-2">
+                  Klike pou wè konfigirasyon Streamlabs ak enfòmasyon ou.
+                </p>
+              )}
+            </div>
+
+            {/* ── OBS WHIP integration panel ───────────────────────────── */}
+            {/* Lets the cameraman switch from browser-publish to OBS Studio
+                broadcasting (1080p60, real encoder, HDMI capture cards). */}
+            <div className="fifayiti-card-dark p-4">
+              <button
+                onClick={() => setObsPanelOpen(!obsPanelOpen)}
+                className="w-full flex items-center justify-between text-left"
+                aria-expanded={obsPanelOpen}
+              >
+                <div className="flex items-center gap-2">
+                  <Monitor size={16} className="text-[#F4C400]" />
+                  <span className="eyebrow text-[#F4C400]">POU OBS STUDIO (òdinatè)</span>
+                </div>
+                {obsPanelOpen ? <ChevronDown size={16} className="text-white/60" /> : <ChevronRight size={16} className="text-white/60" />}
+              </button>
+
+              {obsPanelOpen && (
+                <div className="mt-4 space-y-4">
+                  <p className="body-sm text-white/80 leading-relaxed">
+                    Pou pi bon kalite videyo sou yon <strong>òdinatè</strong> (1080p, 60 fps, sans HDMI nan yon vrè kamè), itilize <strong>OBS Studio</strong>. OBS gen yon ansèyman pi fò pase navigatè a epi li sipòte kat captire.
+                  </p>
+
+                  {/* Step 1 — download OBS */}
+                  <div className="space-y-1">
+                    <p className="eyebrow text-white/60">ETA 1 — Telechaje OBS Studio</p>
+                    <a
+                      href="https://obsproject.com/download"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-[#F4C400] body-sm hover:underline"
+                    >
+                      obsproject.com/download
+                    </a>
+                  </div>
+
+                  {/* Step 2 — get WHIP URL + token */}
+                  <div className="space-y-1">
+                    <p className="eyebrow text-white/60">ETA 2 — Jwenn lyen ou a</p>
+                    {!whipUrl ? (
+                      <button
+                        onClick={fetchWhipToken}
+                        disabled={tokenLoading}
+                        className="w-full rounded-lg px-4 py-2 bg-[#F4C400] text-[#053319] font-bold transition-colors hover:brightness-110 disabled:opacity-50"
+                        style={{ minHeight: 40 }}
+                      >
+                        {tokenLoading ? "Ap jwenn lyen..." : "Jwenn lyen OBS mwen an"}
+                      </button>
+                    ) : (
+                      <div className="space-y-2">
+                        {/* WHIP URL field */}
+                        <div>
+                          <label className="eyebrow text-white/60 mb-1 block">Server URL (OBS → Stream → Server)</label>
+                          <div className="flex gap-2">
+                            <input
+                              readOnly
+                              value={whipUrl}
+                              className="flex-1 rounded-lg bg-black/40 border border-fifayiti-line px-3 py-2 text-white text-sm font-mono"
+                            />
+                            <button
+                              onClick={() => copyToClipboard(whipUrl, "url")}
+                              className="px-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                              aria-label="Kopye URL"
+                            >
+                              {copiedField === "url" ? <Check size={16} className="text-[#116B3A]" /> : <Copy size={16} className="text-white" />}
+                            </button>
+                          </div>
+                        </div>
+                        {/* Token field */}
+                        <div>
+                          <label className="eyebrow text-white/60 mb-1 block">Bearer Token (OBS → Stream → Stream Key)</label>
+                          <div className="flex gap-2">
+                            <input
+                              readOnly
+                              value={whipToken}
+                              className="flex-1 rounded-lg bg-black/40 border border-fifayiti-line px-3 py-2 text-white text-xs font-mono"
+                            />
+                            <button
+                              onClick={() => copyToClipboard(whipToken, "token")}
+                              className="px-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                              aria-label="Kopye token"
+                            >
+                              {copiedField === "token" ? <Check size={16} className="text-[#116B3A]" /> : <Copy size={16} className="text-white" />}
+                            </button>
+                          </div>
+                        </div>
+                        <button
+                          onClick={fetchWhipToken}
+                          className="text-xs text-[#F4C400] hover:underline"
+                        >
+                          ↻ Refwèchi lyen an ( kle a menm pou tout match )
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Step 3 — configure OBS */}
+                  <div className="space-y-1">
+                    <p className="eyebrow text-white/60">ETA 3 — Konfigure OBS</p>
+                    <ol className="body-sm text-white/80 space-y-1.5 ml-5 list-decimal">
+                      <li>Louvri OBS Studio → <strong>Settings</strong> → <strong>Stream</strong></li>
+                      <li><strong>Service:</strong> WHIP</li>
+                      <li><strong>Server:</strong> kole URL ou jwenn nan etap 2</li>
+                      <li><strong>Stream Key / Bearer Token:</strong> kole token ou jwenn nan etap 2</li>
+                      <li>Pou pi bon kalite — <strong>Settings → Output</strong>:
+                        <ul className="ml-5 mt-1 list-disc text-white/70">
+                          <li>Encoder: <strong>NVIDIA NVENC H.264</strong> (si gen GPU Nvidia) oswa <strong>x264</strong></li>
+                          <li>Rate control: <strong>CBR</strong></li>
+                          <li>Bitrate: <strong>6000 Kbps</strong></li>
+                          <li>Keyframe interval: <strong>2 s</strong></li>
+                        </ul>
+                      </li>
+                      <li><strong>Settings → Video</strong>:
+                        <ul className="ml-5 mt-1 list-disc text-white/70">
+                          <li>Base resolution: <strong>1920x1080</strong></li>
+                          <li>FPS: <strong>60</strong> (o 30 si entènèt la piti)</li>
+                        </ul>
+                      </li>
+                      <li>Klike <strong>Start Streaming</strong> nan OBS. Videyo a ap parèt sou TV FIFAYITI.</li>
+                    </ol>
+                  </div>
+
+                  <div className="rounded-lg p-3 border border-[#F4C400]/30 bg-[#F4C400]/5">
+                    <p className="body-sm text-white/80">
+                      <strong className="text-[#F4C400]">Enpòtan:</strong> Pa lance OBS ak navigatè a (oswa Streamlabs) an menm tan. Sèlman youn nan yo dwe konekte kòm <code className="text-white">camera-{slot}</code>. Si yon lòt kamera ap pibliye, kanpe li anvan ou klike Start Streaming.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {!obsPanelOpen && (
+                <p className="body-sm text-white/60 mt-2">
+                  Klike pou wè konfigirasyon OBS ak lyen ou.
+                </p>
+              )}
+            </div>
           </div>
 
           <aside className="space-y-4">
@@ -280,6 +662,17 @@ export default function CameraPage() {
                 <StatusRow icon={Radio} label={isBroadcasting ? "Sou FIFAYITI TV" : "Pa sou TV"} tone={isBroadcasting ? "red" : "gray"} />
                 <StatusRow icon={Users} label={operatorOnline ? "Operatè konekte" : "Operatè pa la"} tone={operatorOnline ? "green" : "gray"} />
                 <StatusRow icon={Eye} label={`${viewerCount} moun ap gade`} tone={viewerCount > 0 ? "green" : "gray"} />
+              </div>
+            </div>
+
+            <div className="fifayiti-card-dark p-4">
+              <p className="eyebrow text-[#F4C400] mb-3">Konfigirasyon HD</p>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between text-white/80"><span>Rezolisyon</span><span className="text-white font-mono">1920×1080</span></div>
+                <div className="flex justify-between text-white/80"><span>Bitrate</span><span className="text-white font-mono">6 Mbps</span></div>
+                <div className="flex justify-between text-white/80"><span>Kòdèk</span><span className="text-white font-mono">H.264</span></div>
+                <div className="flex justify-between text-white/80"><span>Simulcast</span><span className="text-[#116B3A] font-mono">AKTIVE</span></div>
+                <div className="flex justify-between text-white/80"><span>TURN (relè CGNAT)</span><span className="text-[#116B3A] font-mono">AKTIVE</span></div>
               </div>
             </div>
           </aside>

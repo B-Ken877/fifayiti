@@ -201,7 +201,7 @@ export function HomePage() {
         });
         if (!tokenRes.ok) return;
         const { token, wsUrl } = await tokenRes.json();
-        const room = new Room({ adaptiveStrategy: "adaptiveStreaming", autoSubscribe: true });
+        const room = new Room({ adaptiveStream: true, autoSubscribe: true });
         roomRef.current = room;
         room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
           if (cancelled || track.kind !== Track.Kind.Video) return;

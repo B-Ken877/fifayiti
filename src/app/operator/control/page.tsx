@@ -66,7 +66,7 @@ export default function OperatorPage() {
         if (!tokenRes.ok) throw new Error("token failed");
         const { token, wsUrl } = await tokenRes.json();
 
-        const room = new Room({ adaptiveStrategy: "adaptiveStreaming" });
+        const room = new Room({ adaptiveStream: true });
         roomRef.current = room;
 
         room.on(RoomEvent.Connected, () => {

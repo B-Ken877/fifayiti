@@ -84,7 +84,7 @@ export function TvPage() {
       try {
         const tokenRes = await fetch("/api/livekit-token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roomName: ROOM_NAME, participantName: `viewer-${Date.now()}`, role: "viewer" }) });
         if (!tokenRes.ok) return; const { token, wsUrl } = await tokenRes.json();
-        const room = new Room({ adaptiveStrategy: "adaptiveStreaming", autoSubscribe: true });
+        const room = new Room({ adaptiveStream: true, autoSubscribe: true });
         roomRef.current = room;
         room.on(RoomEvent.Connected, () => { if (!cancelled) { setConnected(true); room.localParticipant.setMetadata(JSON.stringify({ role: "viewer" })); }});
         room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => { if (cancelled || track.kind !== Track.Kind.Video) return; try { const meta = JSON.parse(participant.metadata || "{}"); if (meta.slot && meta.slot === selectedSlotRef.current) attachTrack(track); } catch {} });
