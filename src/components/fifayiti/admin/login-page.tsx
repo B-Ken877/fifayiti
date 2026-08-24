@@ -1,25 +1,15 @@
 "use client";
 
 // Standalone login form rendered at the /login route.
-// Differences vs the in-SPA <AdminLogin />:
-//   - Posts to /api/auth/login (real server-side credential check).
-//   - Redirects via window.location.href on success (so middleware-
-//     protected routes can resume) rather than flipping a zustand view.
-//   - Lists ALL 5 roles with their emails (passwords are the role +
-//     "fifAYITI.com", documented in plain Creole to operators).
+// Production-grade — no credential hints, no shortcuts. The operator
+// must know their email + password. Posts to /api/auth/login and
+// redirects via window.location.href (so middleware-protected routes
+// can resume via the ?next= query param).
 
 import { useState } from "react";
 import { Lock, Mail, ShieldCheck, Eye, EyeOff } from "lucide-react";
 import { BrandMark } from "../brand-mark";
 import { useToast } from "@/hooks/use-toast";
-
-const ROLE_HINTS: Array<{ role: string; email: string; label: string }> = [
-  { role: "president",     email: "president@fifayiti.com",     label: "Prezidan" },
-  { role: "director",      email: "director@fifayiti.com",      label: "Direktè Konpetisyon" },
-  { role: "live_operator", email: "live_operator@fifayiti.com", label: "Operatè live (kontwòl TV)" },
-  { role: "cameraman",     email: "cameraman@fifayiti.com",     label: "Kameraman" },
-  { role: "team_admin",    email: "team_admin@fifayiti.com",    label: "Administratè ekip" },
-];
 
 export function AdminLoginPage() {
   const { toast } = useToast();
@@ -110,7 +100,7 @@ export function AdminLoginPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="role@fifayiti.com"
+                  placeholder="ou@fifayiti.com"
                   autoComplete="username"
                   className="w-full pl-10 pr-4 py-3 rounded-[10px] border border-[#E4E7EC] bg-white body-md text-[#101828] focus:outline-none focus:border-[#116B3A] focus:ring-2 focus:ring-[#116B3A]/10"
                   style={{ minHeight: 44 }}
@@ -152,37 +142,6 @@ export function AdminLoginPage() {
               {loading ? "Konekte..." : "Konekte"}
             </button>
           </form>
-
-          {/* Credential reference — documented in Creole for operators */}
-          <div className="mt-6 pt-5 border-t border-[#E4E7EC]">
-            <p className="eyebrow text-[#667085] mb-2">
-              Kont ou ka itilize
-            </p>
-            <div className="rounded-lg bg-[#F4F7F3] p-3">
-              <ul className="meta text-[#667085] space-y-1.5">
-                {ROLE_HINTS.map((h) => (
-                  <li key={h.role}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEmail(h.email);
-                        setPwd(`${h.role}fifAYITI.com`);
-                      }}
-                      className="text-left hover:text-[#084C2A] w-full"
-                    >
-                      <span className="font-semibold text-[#116B3A]">·</span>{" "}
-                      <span className="font-mono text-[11px]">{h.email}</span>
-                      {" — "}
-                      <span>{h.label}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <p className="meta text-[#667085] mt-3 pt-2 border-t border-[#E4E7EC]">
-                Modpas se: <span className="font-mono text-[11px]">[wòl]fifAYITI.com</span>
-              </p>
-            </div>
-          </div>
         </div>
 
         <a

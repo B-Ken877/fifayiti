@@ -4,6 +4,9 @@
 // /operator/* a standalone /login route exists with its own page component
 // (src/components/fifayiti/admin/login-page.tsx). Both forms hit the same
 // /api/auth/login endpoint.
+//
+// Production-grade — no credential hints, no camera shortcuts. The
+// operator must know their email + password.
 
 import { useState } from "react";
 import { Lock, Mail, ShieldCheck, Eye, EyeOff } from "lucide-react";
@@ -11,14 +14,6 @@ import { BrandMark } from "../brand-mark";
 import { useAppStore } from "@/store/app-store";
 import { useAuthSessionStore } from "@/store/auth-session-store";
 import { useToast } from "@/hooks/use-toast";
-
-const ROLE_HINTS: Array<{ role: string; email: string; label: string }> = [
-  { role: "president",     email: "president@fifayiti.com",     label: "Prezidan" },
-  { role: "director",      email: "director@fifayiti.com",      label: "Direktè Konpetisyon" },
-  { role: "live_operator", email: "live_operator@fifayiti.com", label: "Operatè live (kontwòl TV)" },
-  { role: "cameraman",     email: "cameraman@fifayiti.com",     label: "Kameraman" },
-  { role: "team_admin",    email: "team_admin@fifayiti.com",    label: "Administratè ekip" },
-];
 
 export function AdminLogin() {
   const { setView } = useAppStore();
@@ -114,7 +109,7 @@ export function AdminLogin() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="role@fifayiti.com"
+                  placeholder="ou@fifayiti.com"
                   autoComplete="username"
                   className="w-full pl-10 pr-4 py-3 rounded-[10px] border border-[#E4E7EC] bg-white body-md text-[#101828] focus:outline-none focus:border-[#116B3A] focus:ring-2 focus:ring-[#116B3A]/10"
                   style={{ minHeight: 44 }}
@@ -156,82 +151,6 @@ export function AdminLogin() {
               {loading ? "Konekte..." : "Konekte"}
             </button>
           </form>
-
-          {/* Credential reference — click to autofill */}
-          <div className="mt-6 pt-5 border-t border-[#E4E7EC]">
-            <p className="eyebrow text-[#667085] mb-2">
-              Kont ou ka itilize
-            </p>
-            <div className="rounded-lg bg-[#F4F7F3] p-3">
-              <ul className="meta text-[#667085] space-y-1.5">
-                {ROLE_HINTS.map((h) => (
-                  <li key={h.role}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEmail(h.email);
-                        setPwd(`${h.role}fifAYITI.com`);
-                      }}
-                      className="text-left hover:text-[#084C2A] w-full"
-                    >
-                      <span className="font-semibold text-[#116B3A]">·</span>{" "}
-                      <span className="font-mono text-[11px]">{h.email}</span>
-                      {" — "}
-                      <span>{h.label}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <p className="meta text-[#667085] mt-3 pt-2 border-t border-[#E4E7EC]">
-                Modpas se: <span className="font-mono text-[11px]">[wòl]fifAYITI.com</span>
-              </p>
-            </div>
-
-            {/* Quick-access operator camera sessions — bypass login
-                because operator pages require cameraman/live_operator
-                role session cookie. Clicking should hit /login first. */}
-            <div className="mt-3 rounded-lg p-3" style={{ background: "#084C2A" }}>
-              <p className="eyebrow text-[#F4C400] mb-2">
-                Sesyon Kamera & Broadcast
-              </p>
-              <p className="meta text-white/70 mb-3">
-                Konekte tankou kameraman anvan yo ka louvri:
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                <a
-                  href="/login?next=/operator/camera/1"
-                  className="block text-center px-3 py-2 rounded-md body-sm font-bold transition-colors"
-                  style={{ background: "#116B3A", color: "#FFFFFF" }}
-                >
-                  Kamera 1
-                </a>
-                <a
-                  href="/login?next=/operator/camera/2"
-                  className="block text-center px-3 py-2 rounded-md body-sm font-bold transition-colors"
-                  style={{ background: "#116B3A", color: "#FFFFFF" }}
-                >
-                  Kamera 2
-                </a>
-                <a
-                  href="/login?next=/operator/camera/3"
-                  className="block text-center px-3 py-2 rounded-md body-sm font-bold transition-colors"
-                  style={{ background: "#116B3A", color: "#FFFFFF" }}
-                >
-                  Kamera 3
-                </a>
-                <a
-                  href="/login?next=/operator/control"
-                  className="block text-center px-3 py-2 rounded-md body-sm font-bold transition-colors"
-                  style={{ background: "#F4C400", color: "#084C2A" }}
-                >
-                  Operatè (TV)
-                </a>
-              </div>
-              <p className="meta text-white/40 mt-3 text-center">
-                3 kamera + 1 operatè = retransmisyon an dirèk
-              </p>
-            </div>
-          </div>
         </div>
 
         <button
