@@ -132,6 +132,49 @@ export function AdminLogin() {
                 <li>· operator@fifayiti.ht — Operatè live</li>
               </ul>
             </div>
+
+            {/* Quick-access sessions for camera operators + broadcast director */}
+            <div className="mt-3 rounded-lg p-3" style={{ background: "#084C2A" }}>
+              <p className="eyebrow text-[#F4C400] mb-2">
+                Sesyon Kamera & Broadcast
+              </p>
+              <p className="meta text-white/70 mb-3">
+                Klike pou louvri sesyon an dirèkteman (pa gen modpas):
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <a
+                  href="/operator/camera/1"
+                  className="block text-center px-3 py-2 rounded-md body-sm font-bold transition-colors"
+                  style={{ background: "#116B3A", color: "#FFFFFF" }}
+                >
+                  Kamera 1
+                </a>
+                <a
+                  href="/operator/camera/2"
+                  className="block text-center px-3 py-2 rounded-md body-sm font-bold transition-colors"
+                  style={{ background: "#116B3A", color: "#FFFFFF" }}
+                >
+                  Kamera 2
+                </a>
+                <a
+                  href="/operator/camera/3"
+                  className="block text-center px-3 py-2 rounded-md body-sm font-bold transition-colors"
+                  style={{ background: "#116B3A", color: "#FFFFFF" }}
+                >
+                  Kamera 3
+                </a>
+                <a
+                  href="/operator/control"
+                  className="block text-center px-3 py-2 rounded-md body-sm font-bold transition-colors"
+                  style={{ background: "#F4C400", color: "#084C2A" }}
+                >
+                  Operatè (TV)
+                </a>
+              </div>
+              <p className="meta text-white/40 mt-3 text-center">
+                3 kamera + 1 operatè = retransmisyon an dirèk
+              </p>
+            </div>
           </div>
         </div>
 

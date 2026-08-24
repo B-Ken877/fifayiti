@@ -5,10 +5,12 @@ import { useAppStore, type ViewKey } from "@/store/app-store";
 const LINKS: { label: string; view: ViewKey }[] = [
   { label: "Akèy", view: "home" },
   { label: "Match", view: "match" },
+  { label: "Tounwa", view: "tournament" },
   { label: "Ekip", view: "teams" },
   { label: "Jwè", view: "players" },
   { label: "Klasman", view: "standings" },
   { label: "FIFAYITI TV", view: "tv" },
+  { label: "Replay", view: "replays" },
 ];
 
 export function PublicFooter() {

@@ -61,3 +61,12 @@ ecosystem.config.js
 
 # Editor configurations
 .editorconfig
+
+# Server-side backup snapshots (per-deploy point-in-time copies)
+backups/
+
+# Worklog (server-side dev log; keep local-only)
+# worklog.md is intentionally tracked
+
+# Broadcast state (runtime)
+db/broadcast-state.json

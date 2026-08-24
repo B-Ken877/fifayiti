@@ -23,13 +23,14 @@ import {
   Cloud,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const NAV: { label: string; view: ViewKey; icon: React.ElementType; group?: string }[] = [
   { label: "Apèsi", view: "admin-dashboard", icon: LayoutDashboard },
   { label: "Ekip", view: "admin-teams", icon: Users, group: "Operasyon" },
   { label: "Jwè", view: "admin-players", icon: UserCheck },
   { label: "Konpetisyon", view: "admin-competitions", icon: Trophy },
+  { label: "Orè", view: "admin-schedule", icon: CalendarClock },
   { label: "Match", view: "admin-match-control", icon: Megaphone },
   { label: "Klasman", view: "standings", icon: BarChart3 },
   { label: "FIFAYITI TV", view: "tv", icon: Tv, group: "Broadcast" },
@@ -46,6 +47,7 @@ const PAGE_TITLES: Record<string, string> = {
   "admin-team-detail": "Detay Ekip",
   "admin-players": "Verifikasyon Jwè",
   "admin-competitions": "Jesyon Konpetisyon",
+  "admin-schedule": "Orè Konpetisyon",
   "admin-match-control": "Kontwòl Match",
   "admin-replays": "Replay Archive",
   "admin-finances": "Finans",
@@ -66,7 +68,23 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     pendingSync,
   } = useAppStore();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [activeCompName, setActiveCompName] = useState<string | null>(null);
   const title = PAGE_TITLES[view] ?? "Administrasyon";
+
+  // Fetch the active competition name once on mount so the top bar reflects
+  // the real competition (was hardcoded "FIFAYITI Koup Tikan 2026").
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/competitions/active");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data.competition) setActiveCompName(data.competition.name);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const logout = () => {
     setAdminAuthed(false);
@@ -154,7 +172,9 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           {/* Competition selector */}
           <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#F4F7F3]">
             <Trophy size={14} className="text-[#116B3A]" />
-            <span className="body-sm font-semibold text-[#084C2A]">FIFAYITI Koup Tikan 2026</span>
+            <span className="body-sm font-semibold text-[#084C2A]">
+              {activeCompName ?? "Pa gen konpetisyon aktif"}
+            </span>
           </div>
 
           {/* Sync indicator */}

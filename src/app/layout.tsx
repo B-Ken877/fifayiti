@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Manrope, Archivo } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { NavigationHistory } from "@/components/fifayiti/navigation-history";
 
 // Manrope — UI, body, admin, metadata (existing font retained)
 const manrope = Manrope({
@@ -49,6 +50,7 @@ export default function RootLayout({
       <body
         className={`${manrope.variable} ${archivo.variable} antialiased bg-background text-foreground font-sans`}
       >
+        <NavigationHistory />
         {children}
         <Toaster />
       </body>

@@ -1,32 +1,56 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAppStore } from "@/store/app-store";
 import {
-  PILOT,
-  MATCHES,
-  teamById,
-  playerById,
-  matchById,
-  type Player,
-} from "@/lib/fifayiti-data";
-import {
   ScrollText,
-  Square,
-  SquareArrowUp,
   Filter,
   Ban,
   ChevronRight,
   Calendar,
   AlertTriangle,
   ShieldCheck,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type KindFilter = "TOUT" | "JON" | "WOUJ";
 
+interface PlayerRow {
+  id: string;
+  firstName: string;
+  lastName: string;
+  jerseyNumber: number;
+  position: string;
+  teamId: string;
+}
+interface TeamData {
+  id: string;
+  name: string;
+  shortName: string;
+  primaryColor: string;
+  secondaryColor: string;
+  players?: PlayerRow[];
+}
+interface MatchEventRow {
+  id: string;
+  kind: string;
+  teamId?: string | null;
+  playerInId?: string | null;
+  minute: number;
+  correctedFrom?: string | null;
+}
+interface MatchData {
+  id: string;
+  homeTeamId: string;
+  awayTeamId: string;
+  kickoff: string;
+  events: MatchEventRow[];
+}
+
 interface CardRow {
   id: string;
-  player: Player;
+  player: PlayerRow;
   teamId: string;
   matchId: string;
   minute: number;
@@ -37,16 +61,41 @@ export function DisciplinePage() {
   const { setActiveMatchId, setView } = useAppStore();
   const [teamFilter, setTeamFilter] = useState<string>("TOUT");
   const [kindFilter, setKindFilter] = useState<KindFilter>("TOUT");
+  const [matches, setMatches] = useState<MatchData[]>([]);
+  const [teams, setTeams] = useState<TeamData[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Cards are derived ENTIRELY from match events (single source of truth).
-  // No duplicate hard-coded entries — every card shown corresponds to a real
+  useEffect(() => {
+    (async () => {
+      try {
+        const [mRes, tRes] = await Promise.all([
+          fetch("/api/matches").then(r => r.json()),
+          fetch("/api/teams").then(r => r.json()),
+        ]);
+        setMatches(mRes.matches ?? []);
+        setTeams(tRes.teams ?? []);
+      } catch {}
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  const playerById = (id: string) => {
+    for (const t of teams) {
+      const p = (t.players ?? []).find(pl => pl.id === id);
+      if (p) return p;
+    }
+    return undefined;
+  };
+
+  // Cards are derived ENTIRELY from match events — single source of truth.
+  // No duplicate hard-coded entries; every card shown corresponds to a real
   // KAT_JON / KAT_WOUJ event recorded by an operator.
   const cards = useMemo<CardRow[]>(() => {
     const rows: CardRow[] = [];
-    MATCHES.forEach((m) => {
-      m.events.forEach((e) => {
-        if (e.kind !== "KAT_JON" && e.kind !== "KAT_WOUJ") return;
-        if (e.correctedFrom) return; // corrected/voided cards do not count
+    for (const m of matches) {
+      for (const e of m.events ?? []) {
+        if (e.kind !== "KAT_JON" && e.kind !== "KAT_WOUJ") continue;
+        if (e.correctedFrom) continue;
         const p = e.playerInId ? playerById(e.playerInId) : undefined;
         if (p && e.teamId) {
           rows.push({
@@ -58,10 +107,11 @@ export function DisciplinePage() {
             kind: e.kind === "KAT_JON" ? "JON" : "WOUJ",
           });
         }
-      });
-    });
+      }
+    }
     return rows;
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matches, teams]);
 
   const filtered = useMemo(() => {
     return cards.filter((c) => {
@@ -75,7 +125,7 @@ export function DisciplinePage() {
   const suspended = useMemo(() => {
     const map = new Map<
       string,
-      { player: Player; reason: string; teamId: string }
+      { player: PlayerRow; reason: string; teamId: string }
     >();
     cards.forEach((c) => {
       if (c.kind === "WOUJ") {
@@ -88,7 +138,7 @@ export function DisciplinePage() {
         }
       }
     });
-    // yellows per team per player
+    // yellows per player
     const yellowCount = new Map<string, number>();
     cards.forEach((c) => {
       if (c.kind === "JON") {
@@ -101,15 +151,14 @@ export function DisciplinePage() {
       if (p && count >= 2 && !map.has(pid)) {
         map.set(pid, {
           player: p,
-          reason: `2 kat jòn — otomatik (${
-            count
-          } nan konpetisyon)`,
+          reason: `2 kat jòn — otomatik (${count} nan konpetisyon)`,
           teamId: p.teamId,
         });
       }
     });
     return Array.from(map.values());
-  }, [cards]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards, teams]);
 
   const jonCount = cards.filter((c) => c.kind === "JON").length;
   const woujCount = cards.filter((c) => c.kind === "WOUJ").length;
@@ -133,7 +182,7 @@ export function DisciplinePage() {
               Disiplin — kat jòn ak kat wouj
             </h2>
             <p className="body-sm text-[#667085] mt-1">
-              tout kat nan konpetisyon FIFAYITI Koup Tikan 2026. Jwè ak 2 kat jòn
+              tout kat jòn ak kat wouj nan konpetisyon an. Jwè ak 2 kat jòn
               oswa 1 kat wouj otomatikman suspendu.
             </p>
           </div>
@@ -168,7 +217,7 @@ export function DisciplinePage() {
               style={{ minHeight: 44 }}
             >
               <option value="TOUT">Tout ekip</option>
-              {PILOT.teams.map((t) => (
+              {teams.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
                 </option>

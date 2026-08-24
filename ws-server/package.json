@@ -1,0 +1,12 @@
+{
+  "name": "fifayiti-ws-server",
+  "version": "1.0.0",
+  "description": "FIFAYITI Live Broadcast WebSocket server (camera feeds + operator + viewers)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

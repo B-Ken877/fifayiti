@@ -306,7 +306,7 @@ function LiveMatchInline({
     >
       <div className="flex items-center justify-between mb-3">
         <LiveBadge variant="yellow" />
-        <span className="meta font-bold text-white/80 tnum">{match.clock ?? 0}'</span>
+        <span className="meta font-bold text-white/80 tnum">{Math.floor((match.clock ?? 0) / 60)}'</span>
       </div>
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div className="flex items-center gap-2 min-w-0">

@@ -35,6 +35,128 @@ function stageForRound(round: number, totalRounds: number): string {
   return "R32";
 }
 
+/** Stages in knockout order — used to derive the match stage from a slot. */
+const KO_STAGES = ["R32", "R16", "QF", "SF", "FIN", "THIRD_PLACE"];
+
+/**
+ * POST /api/competitions/[id]/bracket
+ *
+ * Create or update the knockout match for a bracket slot ("QF-1", "SF-2",
+ * "FIN-1", "THIRD_PLACE-1", ...). This is the admin workflow for building
+ * the bracket round by round: pick the two teams that meet in this slot.
+ *
+ * Body: { slot, homeTeamId, awayTeamId, kickoff?, venue? }
+ *
+ * Rules:
+ *   - Both teams must be registered in this competition.
+ *   - homeTeamId and awayTeamId must differ.
+ *   - If a match already exists for the slot:
+ *       - teams can only be changed while the match is still PWOGRAM
+ *       - kickoff/venue can be edited any time
+ *   - If no match exists, one is created (stage derived from the slot).
+ */
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const body = await req.json();
+
+    const slot = String(body.slot ?? "");
+    const homeTeamId = body.homeTeamId ? String(body.homeTeamId) : "";
+    const awayTeamId = body.awayTeamId ? String(body.awayTeamId) : "";
+
+    if (!slot || !homeTeamId || !awayTeamId) {
+      return NextResponse.json(
+        { error: "slot, homeTeamId ak awayTeamId obligatwa" },
+        { status: 400 }
+      );
+    }
+    if (homeTeamId === awayTeamId) {
+      return NextResponse.json(
+        { error: "De ekip yo dwe diferan" },
+        { status: 400 }
+      );
+    }
+
+    const [slotStage] = slot.split("-");
+    if (!KO_STAGES.includes(slotStage)) {
+      return NextResponse.json({ error: `slot invalide: ${slot}` }, { status: 400 });
+    }
+
+    const comp = await db.competition.findUnique({
+      where: { id },
+      include: { registrations: true },
+    });
+    if (!comp) return NextResponse.json({ error: "competition not found" }, { status: 404 });
+
+    const registered = new Set(comp.registrations.map((r) => r.teamId));
+    for (const tid of [homeTeamId, awayTeamId]) {
+      if (!registered.has(tid)) {
+        return NextResponse.json(
+          { error: "Ekip sa a pa enskri nan konpetisyon sa a" },
+          { status: 400 }
+        );
+      }
+    }
+
+    const existing = await db.match.findFirst({
+      where: { competitionId: id, bracketSlot: slot },
+    });
+
+    const kickoff = body.kickoff ? new Date(body.kickoff) : undefined;
+    if (kickoff && isNaN(kickoff.getTime())) {
+      return NextResponse.json({ error: "kickoff invalide" }, { status: 400 });
+    }
+
+    let match;
+    if (existing) {
+      const teamsChanged =
+        existing.homeTeamId !== homeTeamId || existing.awayTeamId !== awayTeamId;
+      if (teamsChanged && existing.status !== "PWOGRAM") {
+        return NextResponse.json(
+          { error: "match sa a deja kòmanse — ou pa ka chanje ekip yo" },
+          { status: 409 }
+        );
+      }
+      match = await db.match.update({
+        where: { id: existing.id },
+        data: {
+          ...(teamsChanged ? { homeTeamId, awayTeamId } : {}),
+          ...(kickoff ? { kickoff } : {}),
+          ...(body.venue !== undefined ? { venue: body.venue ?? null } : {}),
+        },
+        include: { homeTeam: true, awayTeam: true },
+      });
+    } else {
+      match = await db.match.create({
+        data: {
+          competitionId: id,
+          matchday: 99, // knockout matches sort after group matchdays
+          stage: slotStage === "THIRD_PLACE" ? "THIRD_PLACE" : slotStage,
+          groupId: null,
+          groupLabel: null,
+          bracketSlot: slot,
+          homeTeamId,
+          awayTeamId,
+          kickoff: kickoff ?? new Date(),
+          venue: body.venue ?? null,
+          competitionName: comp.name,
+          status: "PWOGRAM",
+          clock: 0,
+          half: "PRE",
+        },
+        include: { homeTeam: true, awayTeam: true },
+      });
+    }
+
+    return NextResponse.json({ match }, { status: existing ? 200 : 201 });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 });
+  }
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }

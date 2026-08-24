@@ -106,37 +106,72 @@ interface BracketResponse {
 
 export function TournamentPage() {
   const { setView, setActiveMatchId } = useAppStore();
+  const [competitions, setCompetitions] = useState<CompetitionData[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
   const [competition, setCompetition] = useState<CompetitionData | null>(null);
   const [standings, setStandings] = useState<StandingsResponse | null>(null);
   const [bracket, setBracket] = useState<BracketResponse | null>(null);
+  const [matches, setMatches] = useState<MatchData[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Initial load: competition list + which one is active
   useEffect(() => {
     (async () => {
       try {
-        // Fetch the active competition
-        const activeRes = await fetch("/api/competitions/active");
-        const activeData = await activeRes.json();
-        const comp = activeData.competition as CompetitionData | null;
-
-        if (!comp) {
-          setCompetition(null);
-          return;
-        }
-
-        setCompetition(comp);
-
-        // Fetch standings + bracket in parallel
-        const [standingsRes, bracketRes] = await Promise.all([
-          fetch(`/api/competitions/${comp.id}/standings`).then((r) => r.json()),
-          fetch(`/api/competitions/${comp.id}/bracket`).then((r) => r.json()),
+        const [listRes, activeRes] = await Promise.all([
+          fetch("/api/competitions").then((r) => r.json()),
+          fetch("/api/competitions/active").then((r) => r.json()),
         ]);
-        setStandings(standingsRes);
-        setBracket(bracketRes);
+        const list = (listRes.competitions ?? []) as CompetitionData[];
+        setCompetitions(list);
+        const active = activeRes.competition as CompetitionData | null;
+        const initial = active?.id ?? list[0]?.id ?? "";
+        if (initial) setSelectedId(initial);
       } catch {}
       finally { setLoading(false); }
     })();
   }, []);
+
+  // Load (and live-poll) the selected competition's structure. Everything the
+  // admin does in the bracket manager appears here within a few seconds.
+  useEffect(() => {
+    if (!selectedId) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [compRes, standingsRes, bracketRes, matchesRes] = await Promise.all([
+          fetch(`/api/competitions/${selectedId}`).then((r) => r.json()),
+          fetch(`/api/competitions/${selectedId}/standings`).then((r) => r.json()),
+          fetch(`/api/competitions/${selectedId}/bracket`).then((r) => r.json()),
+          fetch(`/api/matches?competitionId=${selectedId}`).then((r) => r.json()),
+        ]);
+        if (cancelled) return;
+        setCompetition(compRes.competition ?? null);
+        setStandings(standingsRes);
+        setBracket(bracketRes);
+        setMatches(matchesRes.matches ?? []);
+      } catch {}
+    };
+    load();
+    const i = setInterval(load, 8000);
+    return () => { cancelled = true; clearInterval(i); };
+  }, [selectedId]);
+
+  // Group-stage matches (the knockout matches are shown in the bracket)
+  const groupMatches = matches.filter((m) => m.stage === "GROUP");
+
+  // Champion — winner of the final, when played
+  let champion: TeamData | null = null;
+  for (const round of bracket?.bracket?.rounds ?? []) {
+    if (round.stage !== "FIN") continue;
+    for (const m of round.matches) {
+      const mm = m.match;
+      if (mm && mm.status === "FINI") {
+        if (mm.homeScore > mm.awayScore && mm.homeTeam) champion = mm.homeTeam;
+        else if (mm.awayScore > mm.homeScore && mm.awayTeam) champion = mm.awayTeam;
+      }
+    }
+  }
 
   if (loading) {
     return (
@@ -194,6 +229,34 @@ export function TournamentPage() {
             <span className="eyebrow text-[#F4C400]">FIFAYITI · Sezon {competition.season}</span>
           </div>
           <h1 className="display-lg text-white">{competition.name}</h1>
+
+          {/* Championship selector — visible when several championships exist */}
+          {competitions.length > 1 && (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="eyebrow text-white/50">Konpetisyon:</span>
+              {competitions.map((c) => {
+                const active = c.id === selectedId;
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => setSelectedId(c.id)}
+                    className={cn(
+                      "eyebrow px-2.5 py-1 rounded-md transition-all",
+                      active
+                        ? "bg-[#F4C400] text-[#084C2A]"
+                        : "bg-white/15 text-white hover:bg-white/25"
+                    )}
+                  >
+                    {c.name}
+                    {c.status === "IN_PROGRESS" && !active && (
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#D92D20] ml-1.5 align-middle" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <div className="mt-4 flex flex-wrap gap-2">
             <span
               className="eyebrow px-2.5 py-1 rounded-md"
@@ -220,6 +283,25 @@ export function TournamentPage() {
       </section>
 
       <div className="max-w-[1280px] mx-auto px-4 lg:px-6 py-8 lg:py-12 space-y-12">
+        {/* ═══ CHAMPION ═══ */}
+        {champion && (
+          <section
+            className="rounded-2xl border-2 border-[#F4C400] p-5 md:p-6 flex flex-col sm:flex-row items-center gap-4"
+            style={{ background: "linear-gradient(135deg, #084C2A 0%, #116B3A 100%)" }}
+          >
+            <div className="w-14 h-14 rounded-2xl bg-[#F4C400] flex items-center justify-center shrink-0">
+              <Crown size={26} className="text-[#084C2A]" />
+            </div>
+            <div className="text-center sm:text-left">
+              <p className="eyebrow text-[#F4C400]">Chanpyon · {competition.season}</p>
+              <p className="heading-xl text-white mt-1">{champion.name}</p>
+              <p className="body-sm text-white/60 mt-1">
+                {champion.shortName.toUpperCase()} — genyen final la.
+              </p>
+            </div>
+          </section>
+        )}
+
         {/* ═══ GROUP STANDINGS ═══ */}
         {standings && standings.groups && (
           <section>
@@ -294,21 +376,21 @@ export function TournamentPage() {
         )}
 
         {/* ═══ SCHEDULE (GROUP MATCHES) ═══ */}
-        {competition.matches && competition.matches.length > 0 && (
+        {groupMatches.length > 0 && (
           <section>
             <div className="flex items-end justify-between mb-6">
               <div>
                 <span className="eyebrow text-[#116B3A]">Pwogram match</span>
-                <h2 className="heading-xl text-[#101828] mt-2">Tout match yo</h2>
+                <h2 className="heading-xl text-[#101828] mt-2">Match faz gwoup yo</h2>
                 <p className="body-sm text-[#667085] mt-2">
-                  {competition.matches.length} match pwograme pou {competition.name}.
+                  {groupMatches.length} match pou {competition.name}.
                 </p>
               </div>
             </div>
 
             {/* Group matches grouped by matchday */}
             <div className="space-y-6">
-              {Array.from(new Set(competition.matches.map((m) => m.matchday)))
+              {Array.from(new Set(groupMatches.map((m) => m.matchday)))
                 .sort((a, b) => a - b)
                 .map((md) => (
                   <div key={md}>
@@ -317,13 +399,13 @@ export function TournamentPage() {
                       <span className="eyebrow text-[#116B3A]">Joumatch {md}</span>
                     </div>
                     <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {competition.matches
+                      {groupMatches
                         .filter((m) => m.matchday === md)
                         .map((m) => (
                           <ScheduleRow
                             key={m.id}
                             match={m}
-                            teams={competition.groups.flatMap((g) => g.teams.map((t) => t.team))}
+                            teams={competition.groups?.flatMap((g) => g.teams.map((t) => t.team)) ?? []}
                             onClick={() => {
                               setActiveMatchId(m.id);
                               setView("match");
@@ -445,13 +527,18 @@ function BracketSlot({
   onClick: () => void;
 }) {
   if (status === "pending" || !match) {
+    const [stage] = slot.split("-");
+    const pendingText =
+      stage === "THIRD_PLACE" ? "Tann pèdè demifinal yo"
+      : stage === "QF" || stage === "R16" || stage === "R32" ? "Tann rezilta gwoup yo"
+      : "Tann gayan tur presedan an";
     return (
       <div
         className="rounded-lg border border-dashed border-[#D0D5DD] bg-[#F4F7F3] p-3 text-center"
         style={{ minHeight: 80 }}
       >
-        <p className="meta text-[#667085]">Tann rezilta gwoup</p>
-        <p className="eyebrow text-[#667085] mt-1">{slot}</p>
+        <p className="meta text-[#667085]">{pendingText}</p>
+        <p className="eyebrow text-[#98A2B3] mt-1">{slot}</p>
       </div>
     );
   }
@@ -462,6 +549,15 @@ function BracketSlot({
   const isFinished = match.status === "FINI";
   const homeWon = isFinished && match.homeScore > match.awayScore;
   const awayWon = isFinished && match.awayScore > match.homeScore;
+  const isFinal = slot.startsWith("FIN");
+
+  const fmtKick = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" }) +
+        " · " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    } catch { return ""; }
+  };
 
   return (
     <button
@@ -474,7 +570,13 @@ function BracketSlot({
     >
       <div className="flex items-center justify-between mb-1">
         <span className="eyebrow text-[#667085]">{match.competitionName || "FIFAYITI"}</span>
-        {isLive && <span className="eyebrow text-[#D92D20]">● Live</span>}
+        {isLive ? (
+          <span className="eyebrow text-[#D92D20]">● Live</span>
+        ) : isFinished && isFinal ? (
+          <span className="eyebrow text-[#F4C400]">★ Final jwe</span>
+        ) : (
+          <span className="meta text-[#98A2B3] tnum">{fmtKick(match.kickoff)}</span>
+        )}
       </div>
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
@@ -495,6 +597,7 @@ function BracketSlot({
             )}>
               {home?.name ?? "TBD"}
             </span>
+            {homeWon && isFinal && <Crown size={12} className="text-[#F4C400] shrink-0" />}
           </div>
           <span className={cn("score text-lg tnum", homeWon ? "text-[#116B3A]" : "text-[#101828]")}>
             {isLive || isFinished ? match.homeScore : "—"}
@@ -518,6 +621,7 @@ function BracketSlot({
             )}>
               {away?.name ?? "TBD"}
             </span>
+            {awayWon && isFinal && <Crown size={12} className="text-[#F4C400] shrink-0" />}
           </div>
           <span className={cn("score text-lg tnum", awayWon ? "text-[#116B3A]" : "text-[#101828]")}>
             {isLive || isFinished ? match.awayScore : "—"}

@@ -1,12 +1,12 @@
 "use client";
-import { Home, Tv, Trophy, Users, BarChart3 } from "lucide-react";
+import { Home, Trophy, Users, BarChart3, Film, Megaphone } from "lucide-react";
 import { useAppStore, type ViewKey } from "@/store/app-store";
 import { cn } from "@/lib/utils";
 
 const ITEMS: { icon: React.ElementType; label: string; view: ViewKey }[] = [
   { icon: Home, label: "Akèy", view: "home" },
-  { icon: Trophy, label: "Match", view: "match" },
-  { icon: Tv, label: "FIFAYITI TV", view: "tv" },
+  { icon: Megaphone, label: "Match", view: "match" },
+  { icon: Trophy, label: "Tounwa", view: "tournament" },
   { icon: Users, label: "Ekip", view: "teams" },
   { icon: BarChart3, label: "Klasman", view: "standings" },
 ];

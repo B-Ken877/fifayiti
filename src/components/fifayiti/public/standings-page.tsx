@@ -108,12 +108,30 @@ export function StandingsPage() {
   }, []);
 
   const records = computeRecords(teams, matches);
-  const groupA = sortByTiebreaker(
-    teams.filter((t) => t.group === "A").map((t) => records.get(t.id)!)
-  ).filter(Boolean);
-  const groupB = sortByTiebreaker(
-    teams.filter((t) => t.group === "B").map((t) => records.get(t.id)!)
-  ).filter(Boolean);
+
+  // Build a panel per group — discover group names dynamically from the team
+  // data instead of hard-coding "A" and "B" (the platform supports any number
+  // of groups, determined at competition-creation time).
+  const groupNames = Array.from(
+    new Set(teams.map(t => t.group).filter(Boolean).sort())
+  );
+  const panels = groupNames.map((g, i) => ({
+    name: g,
+    records: sortByTiebreaker(
+      teams.filter(t => t.group === g).map(t => records.get(t.id)!)
+    ).filter(Boolean),
+    badgeColor: i === 0 ? "#116B3A" : i === 1 ? "#F4C400" : "#0B6B3A",
+    badgeText: i === 1 ? "#084C2A" : "#FFFFFF",
+  }));
+  // Fallback when no team has a group label at all.
+  if (panels.length === 0 && teams.length > 0) {
+    panels.push({
+      name: "A",
+      records: sortByTiebreaker(teams.map(t => records.get(t.id)!)).filter(Boolean),
+      badgeColor: "#116B3A",
+      badgeText: "#FFFFFF",
+    });
+  }
 
   return (
     <div className="bg-white min-h-[60vh]">
@@ -121,7 +139,7 @@ export function StandingsPage() {
         <span className="eyebrow text-[#116B3A]">Sitiyasyon aktyèl</span>
         <h1 className="display-md text-[#101828] mt-2">Klasman</h1>
         <p className="body-sm text-[#667085] mt-3 max-w-2xl">
-          De gwoup (A &amp; B). Estatistik yo kalkile apati match ofisyèl yo.
+          Estatistik yo kalkile apati match ofisyèl yo (FINI ak AN DIRÈK).
         </p>
 
         {loading ? (
@@ -137,20 +155,17 @@ export function StandingsPage() {
           </div>
         ) : (
           <div className="mt-10 grid lg:grid-cols-2 gap-6">
-            <StandingsPanel
-              title="Gwoup A"
-              badge="A"
-              records={groupA}
-              teamData={teams}
-            />
-            <StandingsPanel
-              title="Gwoup B"
-              badge="B"
-              records={groupB}
-              teamData={teams}
-              badgeColor="#F4C400"
-              badgeText="#084C2A"
-            />
+            {panels.map((p) => (
+              <StandingsPanel
+                key={p.name}
+                title={`Gwoup ${p.name}`}
+                badge={p.name}
+                records={p.records}
+                teamData={teams}
+                badgeColor={p.badgeColor}
+                badgeText={p.badgeText}
+              />
+            ))}
           </div>
         )}
 

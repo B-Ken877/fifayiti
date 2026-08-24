@@ -4,6 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Trophy, Plus, X, Save, Trash2, RefreshCw, Calendar, Users,
   ChevronRight, Crown, Settings, AlertTriangle, CheckCircle2, ListChecks,
+  ArrowRight, Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -53,7 +54,28 @@ interface CompetitionData {
   endDate?: string | null;
   groups?: GroupData[];
   matches?: MatchData[];
+  registrations?: Array<{ teamId: string; team: TeamData; groupId?: string | null; seedNumber: number }>;
   _count?: { matches: number; registrations: number };
+}
+
+/** Knockout bracket shapes (GET /api/competitions/[id]/bracket). */
+interface BracketMatchData extends MatchData {
+  homeTeam?: TeamData;
+  awayTeam?: TeamData;
+}
+interface BracketRoundData {
+  round: number;
+  stage: string;
+  label: string;
+  matches: Array<{ slot: string; status: string; match?: BracketMatchData }>;
+}
+interface BracketDataResponse {
+  bracket: {
+    size: number;
+    totalRounds: number;
+    rounds: BracketRoundData[];
+  } | null;
+  message?: string;
 }
 
 interface CreateForm {
@@ -478,6 +500,23 @@ function CompetitionEditor({
   const [generating, setGenerating] = useState(false);
   const [scheduleStartDate, setScheduleStartDate] = useState("");
 
+  // ─── Knockout bracket management state ───
+  const [bracketData, setBracketData] = useState<BracketDataResponse | null>(null);
+  // Pre-fills coming from "advance winner" when the target slot has no match yet
+  const [pendingFill, setPendingFill] = useState<Record<string, { home?: string; away?: string }>>({});
+
+  const fetchBracket = async () => {
+    try {
+      const res = await fetch(`/api/competitions/${competition.id}/bracket`);
+      setBracketData(await res.json());
+    } catch {}
+  };
+
+  useEffect(() => {
+    setPendingFill({});
+    fetchBracket();
+  }, [competition.id]);
+
   // Init assignments from current registrations
   useEffect(() => {
     const map: Record<string, string> = {};
@@ -557,6 +596,52 @@ function CompetitionEditor({
       toast({ title: "Erè", description: e.message, variant: "destructive" });
     }
   };
+
+  // ─── Advance a team into the next bracket round ───
+  const advanceTeam = async (fromSlot: string, teamId: string, toSlot?: string) => {
+    try {
+      const res = await fetch(`/api/competitions/${competition.id}/bracket/advance`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fromSlot, winnerTeamId: teamId, toSlot }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "echwe");
+
+      const teamName = regTeams.find((t) => t.id === teamId)?.name ?? "Ekip la";
+      if (data.needsCreation) {
+        // The target slot has no match yet — pre-fill its form with this team.
+        setPendingFill((prev) => ({
+          ...prev,
+          [data.toSlot]: { ...(prev[data.toSlot] ?? {}), [data.side]: teamId },
+        }));
+        toast({
+          title: `Ouvri slot ${data.toSlot}`,
+          description: `${teamName} plase. Koulye a, chwazi lòt ekip la epi kreye match la.`,
+        });
+      } else {
+        toast({
+          title: "Ekip avanse",
+          description: `${teamName} plase nan ${data.toSlot}.`,
+        });
+      }
+      await fetchBracket();
+      onRefresh();
+    } catch (e: any) {
+      toast({ title: "Erè", description: e.message, variant: "destructive" });
+    }
+  };
+
+  // Registered teams (for the bracket pickers)
+  const regTeams: TeamData[] = competition.registrations
+    ? competition.registrations.map((r) => r.team)
+    : (competition.groups ?? []).flatMap((g) => g.teams.map((t) => t.team));
+
+  // Bracket entries indexed by slot — used for feeder lookups
+  const entriesBySlot: Record<string, { slot: string; status: string; match?: BracketMatchData }> = {};
+  for (const r of bracketData?.bracket?.rounds ?? []) {
+    for (const m of r.matches) entriesBySlot[m.slot] = m;
+  }
 
   const totalAssigned = Object.keys(assignments).length;
   const expectedTeams = competition.groupCount * competition.teamsPerGroup;
@@ -760,7 +845,7 @@ function CompetitionEditor({
               {competition.matches.length} match ki egziste deja · Jenere ankò ap efase ansyen yo
             </p>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-[300px] overflow-y-auto">
-              {competition.matches.slice(0, 12).map((m) => {
+              {(competition.matches ?? []).filter((m) => m.stage === "GROUP").slice(0, 12).map((m) => {
                 const home = teams.find((t) => t.id === m.homeTeamId);
                 const away = teams.find((t) => t.id === m.awayTeamId);
                 return (
@@ -775,6 +860,75 @@ function CompetitionEditor({
                 );
               })}
             </div>
+          </div>
+        )}
+      </section>
+
+      {/* ═══ KNOCKOUT BRACKET MANAGER ═══ */}
+      <section className="fifayiti-card p-4 md:p-5">
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <p className="eyebrow text-[#667085]">Faz eliminatwa</p>
+            <h3 className="heading-md text-[#084C2A]">Jesyon tablo a</h3>
+            <p className="meta text-[#667085] mt-1 max-w-lg">
+              Chwazi de ekip yo pou chak match tur pa tur. Lè yon match fini, klike sou ekip la
+              ki genyen pou voye l otomatikman nan tur swivan an.
+            </p>
+          </div>
+          <button onClick={fetchBracket} className="btn-secondary shrink-0">
+            <RefreshCw size={14} /> Aktyalize
+          </button>
+        </div>
+
+        {!competition.hasKnockoutPhase ? (
+          <div className="rounded-xl border border-dashed border-[#D0D5DD] p-8 text-center">
+            <p className="body-sm text-[#667085]">
+              Pa gen faz eliminatwa pou konpetisyon sa a (sèlman faz gwoup).
+            </p>
+          </div>
+        ) : bracketData?.bracket ? (
+          <div className="overflow-x-auto pb-2">
+            <div className="flex gap-4 min-w-max">
+              {bracketData.bracket.rounds.map((round) => (
+                <div key={round.round} className="w-[290px] shrink-0">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-6 h-6 rounded-md bg-[#084C2A] flex items-center justify-center text-[10px] font-bold text-[#F4C400]">
+                      {round.round}
+                    </span>
+                    <p className="eyebrow text-[#667085]">{round.label}</p>
+                  </div>
+                  <div className="space-y-3">
+                    {round.matches.map((entry) => (
+                      <BracketSlotAdmin
+                        key={entry.slot}
+                        slot={entry.slot}
+                        entry={entry}
+                        entriesBySlot={entriesBySlot}
+                        regTeams={regTeams}
+                        hasThirdPlace={competition.hasThirdPlaceMatch}
+                        compId={competition.id}
+                        pending={pendingFill[entry.slot]}
+                        onSetPending={(side, teamId) =>
+                          setPendingFill((prev) => ({
+                            ...prev,
+                            [entry.slot]: { ...(prev[entry.slot] ?? {}), [side]: teamId },
+                          }))
+                        }
+                        onSaved={async () => {
+                          await fetchBracket();
+                          onRefresh();
+                        }}
+                        onAdvance={advanceTeam}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-[#D0D5DD] p-8 text-center">
+            <p className="body-sm text-[#667085]">Ap charger tablo a...</p>
           </div>
         )}
       </section>
@@ -811,5 +965,351 @@ function InfoCard({ label, value, sub }: { label: string; value: string; sub?: s
       <p className="score text-2xl text-[#084C2A] mt-1">{value}</p>
       {sub && <p className="meta text-[#667085] mt-0.5">{sub}</p>}
     </div>
+  );
+}
+
+// ─── Knockout bracket slot card (admin) ────────────────────────────
+
+const KO_STAGE_ORDER = ["R32", "R16", "QF", "SF", "FIN"];
+
+/** Which slots feed the home/away side of this slot (standard bracket). */
+function feederSlots(slot: string): { home: string | null; away: string | null } {
+  const [stage, numStr] = slot.split("-");
+  const num = parseInt(numStr, 10);
+  if (stage === "THIRD_PLACE") return { home: "SF-1", away: "SF-2" };
+  const idx = KO_STAGE_ORDER.indexOf(stage);
+  if (idx <= 0) return { home: null, away: null };
+  const prev = KO_STAGE_ORDER[idx - 1];
+  return { home: `${prev}-${num * 2 - 1}`, away: `${prev}-${num * 2}` };
+}
+
+/** The slot the winner of this slot goes to (null for the final). */
+function nextSlotLabel(slot: string): string | null {
+  const [stage, numStr] = slot.split("-");
+  const num = parseInt(numStr, 10);
+  if (stage === "THIRD_PLACE") return null;
+  const idx = KO_STAGE_ORDER.indexOf(stage);
+  if (idx === -1 || idx === KO_STAGE_ORDER.length - 1) return null;
+  return `${KO_STAGE_ORDER[idx + 1]}-${Math.ceil(num / 2)}`;
+}
+
+function fmtKickLocal(iso?: string | null): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch { return ""; }
+}
+
+function fmtKickDisplay(iso?: string | null): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" }) +
+      " · " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  } catch { return "—"; }
+}
+
+function TeamMini({ team, bold }: { team?: TeamData; bold?: boolean }) {
+  if (!team) return <span className="body-sm text-[#98A2B3]">TBD</span>;
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      {team.logoUrl ? (
+        <img src={team.logoUrl} alt={team.name} className="w-5 h-5 object-contain shrink-0" />
+      ) : (
+        <div
+          className="w-5 h-5 rounded flex items-center justify-center text-[8px] font-bold shrink-0"
+          style={{ background: team.primaryColor, color: team.secondaryColor }}
+        >
+          {team.shortName.slice(0, 3).toUpperCase()}
+        </div>
+      )}
+      <span className={cn("body-sm truncate", bold ? "font-bold text-[#101828]" : "text-[#667085]")}>
+        {team.name}
+      </span>
+    </div>
+  );
+}
+
+function BracketSlotAdmin({
+  slot, entry, entriesBySlot, regTeams, hasThirdPlace, pending, onSetPending, onSaved, onAdvance, compId,
+}: {
+  slot: string;
+  entry: { slot: string; status: string; match?: BracketMatchData };
+  entriesBySlot: Record<string, { slot: string; status: string; match?: BracketMatchData }>;
+  regTeams: TeamData[];
+  hasThirdPlace: boolean;
+  pending?: { home?: string; away?: string };
+  onSetPending: (side: "home" | "away", teamId: string) => void;
+  onSaved: () => Promise<void>;
+  onAdvance: (fromSlot: string, teamId: string, toSlot?: string) => Promise<void>;
+  compId: string;
+}) {
+  const match = entry.match;
+  const [homeId, setHomeId] = useState("");
+  const [awayId, setAwayId] = useState("");
+  const [kickoff, setKickoff] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+
+  // Pre-fill from "advance winner" actions
+  useEffect(() => {
+    if (pending?.home) setHomeId(pending.home);
+    if (pending?.away) setAwayId(pending.away);
+  }, [pending?.home, pending?.away]);
+
+  const feeders = feederSlots(slot);
+  const feederWinner = (side: "home" | "away"): TeamData | null => {
+    const fSlot = feeders[side];
+    if (!fSlot) return null;
+    const fMatch = entriesBySlot[fSlot]?.match;
+    if (!fMatch || fMatch.status !== "FINI") return null;
+    if (fMatch.homeScore > fMatch.awayScore) return fMatch.homeTeam ?? null;
+    if (fMatch.awayScore > fMatch.homeScore) return fMatch.awayTeam ?? null;
+    return null;
+  };
+  const feederLabel = (side: "home" | "away") => feeders[side] ?? "";
+
+  const showForm = !match || editing;
+
+  return (
+    <div className={cn(
+      "rounded-xl border p-3",
+      match?.status === "AN_DIRÈK" ? "border-[#F4C400] bg-[#FFFDF5]"
+      : match ? "border-[#D0D5DD] bg-white"
+      : "border-dashed border-[#D0D5DD] bg-[#F4F7F3]"
+    )}>
+      {/* Slot header */}
+      <div className="flex items-center justify-between mb-2">
+        <span className="eyebrow text-[#667085]">{slot}</span>
+        {match && (
+          <span
+            className="eyebrow px-1.5 py-0.5 rounded"
+            style={{
+              background: match.status === "AN_DIRÈK" ? "#D92D20"
+                : match.status === "FINI" ? "#116B3A"
+                : "#E4E7EC",
+              color: match.status === "PWOGRAM" ? "#667085" : "#FFFFFF",
+            }}
+          >
+            {match.status === "AN_DIRÈK" ? "An dirèk" : match.status === "FINI" ? "Fini" : "Pwogram"}
+          </span>
+        )}
+      </div>
+
+      {showForm ? (
+        /* ── Form: pick the two teams for this slot ── */
+        <div className="space-y-2">
+          <select
+            value={homeId}
+            onChange={(e) => { setHomeId(e.target.value); onSetPending("home", e.target.value); }}
+            className="input text-sm"
+            style={{ minHeight: 36 }}
+          >
+            <option value="">Ekip 1 (domisil)...</option>
+            {regTeams.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+          <select
+            value={awayId}
+            onChange={(e) => { setAwayId(e.target.value); onSetPending("away", e.target.value); }}
+            className="input text-sm"
+            style={{ minHeight: 36 }}
+          >
+            <option value="">Ekip 2 (deplasman)...</option>
+            {regTeams.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+
+          {/* Quick-fill from feeder winners */}
+          {(feederWinner("home") || feederWinner("away")) && (
+            <div className="flex flex-wrap gap-1.5">
+              {(["home", "away"] as const).map((side) => {
+                const w = feederWinner(side);
+                if (!w) return null;
+                return (
+                  <button
+                    key={side}
+                    onClick={() => {
+                      if (side === "home") { setHomeId(w.id); onSetPending("home", w.id); }
+                      else { setAwayId(w.id); onSetPending("away", w.id); }
+                    }}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[#116B3A]/10 text-[10px] font-bold text-[#116B3A] hover:bg-[#116B3A]/20"
+                  >
+                    <Crown size={10} /> {w.shortName} ({feederLabel(side)})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="datetime-local"
+              value={kickoff}
+              onChange={(e) => setKickoff(e.target.value)}
+              className="input text-sm"
+              style={{ minHeight: 36 }}
+            />
+            <SlotSaveButton
+              slot={slot}
+              compId={compId}
+              homeId={homeId}
+              awayId={awayId}
+              kickoff={kickoff}
+              busy={busy}
+              setBusy={setBusy}
+              editing={!!match}
+              onDone={async () => { setEditing(false); await onSaved(); }}
+            />
+          </div>
+          {editing && (
+            <button onClick={() => setEditing(false)} className="meta text-[#667085] hover:text-[#D92D20] w-full text-center">
+              Anile
+            </button>
+          )}
+        </div>
+      ) : (
+        /* ── Match card ── */
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <TeamMini team={match!.homeTeam} bold={match!.status === "FINI" && match!.homeScore > match!.awayScore} />
+            <span className={cn("score text-lg tnum", match!.status === "FINI" && match!.homeScore > match!.awayScore ? "text-[#116B3A]" : "text-[#101828]")}>
+              {match!.status === "FINI" || match!.status === "AN_DIRÈK" ? match!.homeScore : "—"}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <TeamMini team={match!.awayTeam} bold={match!.status === "FINI" && match!.awayScore > match!.homeScore} />
+            <span className={cn("score text-lg tnum", match!.status === "FINI" && match!.awayScore > match!.homeScore ? "text-[#116B3A]" : "text-[#101828]")}>
+              {match!.status === "FINI" || match!.status === "AN_DIRÈK" ? match!.awayScore : "—"}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 meta text-[#667085] pt-1 border-t border-[#F0F2F5]">
+            <Clock size={10} /> {fmtKickDisplay(match!.kickoff)}
+          </div>
+
+          {/* Advance controls */}
+          {match!.status === "FINI" && (
+            <div className="space-y-1.5 pt-1">
+              {slot.startsWith("FIN") ? (
+                <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-[#F4C400]/20 text-[10px] font-bold text-[#084C2A]">
+                  <Crown size={11} /> GAYAN AN SE CHANPYON AN
+                </div>
+              ) : (
+                <div>
+                  <p className="meta text-[#667085] mb-1">Voye gayan an nan {nextSlotLabel(slot)}:</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[match!.homeTeam, match!.awayTeam].map((t) => (
+                      <button
+                        key={t?.id}
+                        onClick={() => t && onAdvance(slot, t.id)}
+                        className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-md bg-[#116B3A] text-white text-[10px] font-bold hover:bg-[#084C2A]"
+                      >
+                        <ArrowRight size={10} /> {t?.shortName ?? "?"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {slot.startsWith("SF") && hasThirdPlace && (
+                <div>
+                  <p className="meta text-[#667085] mb-1">Voye pèdè a nan 3yèm plas:</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[match!.homeTeam, match!.awayTeam].map((t) => (
+                      <button
+                        key={t?.id}
+                        onClick={() => t && onAdvance(slot, t.id, "THIRD_PLACE-1")}
+                        className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-md bg-white border border-[#D0D5DD] text-[#667085] text-[10px] font-bold hover:border-[#F4C400] hover:text-[#084C2A]"
+                      >
+                        {t?.shortName ?? "?"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {match!.status === "PWOGRAM" && (
+            <button
+              onClick={() => {
+                setHomeId(match!.homeTeamId);
+                setAwayId(match!.awayTeamId);
+                setKickoff(fmtKickLocal(match!.kickoff));
+                setEditing(true);
+              }}
+              className="meta text-[#116B3A] hover:underline w-full text-center pt-1 border-t border-[#F0F2F5]"
+            >
+              Chanje ekip / dat
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Separate save button component so the fetch logic stays clean. */
+function SlotSaveButton({
+  slot, compId, homeId, awayId, kickoff, busy, setBusy, editing, onDone,
+}: {
+  slot: string;
+  compId: string;
+  homeId: string;
+  awayId: string;
+  kickoff: string;
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+  editing: boolean;
+  onDone: () => Promise<void>;
+}) {
+  const { toast } = useToast();
+  const save = async () => {
+    if (!homeId || !awayId) {
+      toast({ title: "Mannya", description: "Chwazi de ekip yo", variant: "destructive" });
+      return;
+    }
+    if (homeId === awayId) {
+      toast({ title: "Mannya", description: "De ekip yo dwe diferan", variant: "destructive" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/competitions/${compId}/bracket`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slot,
+          homeTeamId: homeId,
+          awayTeamId: awayId,
+          kickoff: kickoff ? new Date(kickoff).toISOString() : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "echwe");
+      toast({
+        title: editing ? "Match modifye" : "Match kreye",
+        description: `Slot ${slot} sove.`,
+      });
+      await onDone();
+    } catch (e: any) {
+      toast({ title: "Erè", description: e.message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      onClick={save}
+      disabled={busy}
+      className="btn-primary text-xs disabled:opacity-60"
+      style={{ minHeight: 36 }}
+    >
+      <Save size={12} /> {busy ? "..." : editing ? "Sove" : "Kreye"}
+    </button>
   );
 }

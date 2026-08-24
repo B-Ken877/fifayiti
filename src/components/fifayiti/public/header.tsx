@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Menu, X, Tv } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "../brand-mark";
 import { useAppStore, type ViewKey } from "@/store/app-store";
@@ -12,7 +12,7 @@ const NAV: { label: string; view: ViewKey }[] = [
   { label: "Ekip", view: "teams" },
   { label: "Jwè", view: "players" },
   { label: "Klasman", view: "standings" },
-  { label: "FIFAYITI TV", view: "tv" },
+  { label: "Replay", view: "replays" },
 ];
 
 export function PublicHeader() {
@@ -55,12 +55,6 @@ export function PublicHeader() {
               );
             })}
           </nav>
-
-          <div className="hidden md:flex items-center gap-2">
-            <button onClick={() => setView("tv")} className="btn-featured">
-              <Tv size={16} strokeWidth={2.5} /> Gade TV
-            </button>
-          </div>
 
           <button
             className="md:hidden inline-flex items-center justify-center rounded-lg p-2 text-white"
@@ -113,15 +107,6 @@ export function PublicHeader() {
                   {item.label}
                 </button>
               ))}
-              <button
-                onClick={() => {
-                  setView("tv");
-                  setOpen(false);
-                }}
-                className="mt-2 btn-featured"
-              >
-                <Tv size={16} strokeWidth={2.5} /> Gade TV
-              </button>
             </nav>
           </div>
         </div>

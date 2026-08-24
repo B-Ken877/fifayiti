@@ -187,7 +187,7 @@ export function MatchPage() {
               </div>
               {isLive ? (
                 <div className="mt-3 inline-flex items-center px-3 py-1.5 rounded-full bg-[#F4C400] text-[#084C2A]">
-                  <span className="eyebrow tnum">{match.clock ?? 0}'</span>
+                  <span className="eyebrow tnum">{Math.floor((match.clock ?? 0) / 60)}'</span>
                   <span className="text-xs mx-1.5">·</span>
                   <span className="text-xs font-bold">{halfLabel}</span>
                 </div>
