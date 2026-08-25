@@ -838,3 +838,26 @@ Stage Summary:
 - FIFAYITI TV now a professional broadcast: controlled ~3-4s latency, stable HLS delivery, full DVR controls, YouTube-style player with rotating fullscreen button
 - Every broadcast session is recorded as VOD-ready HLS on disk — instant replay/full-match replay/highlights are additive features now, not re-architecture
 
+---
+Task ID: 16
+Agent: Super Z (main agent)
+Task: User: "I don't see the buttons" on the home page + investigation of black HLS recording
+
+Work Log:
+- VLM analysis of user screenshot: they were on the HOME (Akèy) tab showing the live placeholder — the BroadcastPlayer (Task 15) was only wired into the TV view, never the home page
+- Root-caused the black HLS recording with forensics + live experiments:
+  · User's camera (browser) was connected 23:44:32-23:47:25 but delivered NO FRAMES — single-phone testing (camera tab backgrounded when switching to operator/home page) freezes WebRTC publishing on Android; participant stays "connected" with a frameless track
+  · Verified independently: my test tab froze at 398.494s when the RTMP camera stalled — a "connected but frameless" track renders black/frozen everywhere
+  · Also found + fixed: zombie egress after container restart (Redis entry stays "active", stopEgress times out, ensureHlsEgress adopts the dead handler → blocks all future broadcasts; cleared via binary-safe Redis surgery + added health checks)
+- Fix A (home page): BroadcastPlayer wired into the home hero player — polls /api/livekit-hls, switches to HLS player with DVR controls when ready, WebRTC fallback otherwise, unsubscribes WebRTC video while HLS active
+- Fix B (egress template): frame watchdog — if video.currentTime stops advancing >4s, the FIFAYITI placeholder shows in the recording instead of elegant black (honest recordings; recovers when frames resume)
+- Fix C (hls-egress lifecycle): (1) zombie protection — active egress with no playlist after 90s is force-stopped (8s timeout) and restarted; (2) stale-broadcast auto-stop — operator vanishing without pressing stop now finalizes the recording after 5min without any cameraman and clears broadcast-state.json (previously recorded black forever)
+- Fix D (camera page): background-tab warning banner in Creole when live + document.hidden
+- E2E VERIFIED: fresh RTMP camera → broadcast → HLS segments 269-276KB with REAL video (frame = SMPTE test pattern confirmed by VLM); HOME page shows BroadcastPlayer with all buttons (Poz, ±10s, LIVE, Plein ekran) — pause/rewind/return-to-live all functional in browser; mobile viewport (390x844) verified; controls auto-hide like YouTube
+- Remaining user guidance: a single phone CANNOT run camera + operator + viewer simultaneously (Android freezes backgrounded camera tabs) — use two devices for real matches
+
+Stage Summary:
+- Home page now carries the full broadcast player (the user's complaint)
+- Recordings are honest (placeholder vs black), zombies self-clear, stale broadcasts finalize
+- Camera page warns when backgrounded
+

@@ -44,6 +44,11 @@ export default function CameraPage() {
   //   fluid (default) — 720p @ 3 Mbps: holds up on Natcom/Digicel data
   //   hd              — 1080p @ 6 Mbps: for Wi-Fi / fiber only
   const [quality, setQuality] = useState<"fluid" | "hd">("fluid");
+  // Background-tab hazard: on phones, when this page goes to background
+  // (user switches app/tab), Android freezes WebRTC publishing — the
+  // participant stays "connected" but NO video frames reach viewers
+  // (verified 2026-08-24: this recorded black on TV while "LIVE").
+  const [backgrounded, setBackgrounded] = useState(false);
   const QUALITY = quality === "hd"
     ? { w: 1920, h: 1080, bitrate: 6_000_000, label: "1080p HD" }
     : { w: 1280, h: 720, bitrate: 3_000_000, label: "720p Fluit" };
@@ -64,6 +69,12 @@ export default function CameraPage() {
       } catch {}
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const onVis = () => setBackgrounded(document.hidden);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
   const logout = async () => {
@@ -345,6 +356,14 @@ export default function CameraPage() {
       <main className="flex-1 max-w-[1280px] mx-auto w-full px-4 py-6">
         <div className="grid lg:grid-cols-[1.4fr_1fr] gap-6">
           <div className="space-y-4">
+            {backgrounded && status === "live" && (
+              <div className="rounded-lg p-3 border flex items-start gap-2 animate-pulse" style={{ background: "rgba(217,45,32,0.15)", borderColor: "#D92D20" }}>
+                <AlertCircle size={16} className="text-[#D92D20] shrink-0 mt-0.5" />
+                <p className="body-sm text-white">
+                  <strong>Paj sa a an background!</strong> Android ap bloke kamera a — moun ki ap gade TV yo pa wè anyen. Tanpri <strong>louvri paj sa a ankò</strong> epi kenbe li devan pandan tout match la.
+                </p>
+              </div>
+            )}
             <div className="relative aspect-video rounded-xl overflow-hidden bg-black border border-fifayiti-line">
               <video ref={videoRef} muted playsInline autoPlay className="w-full h-full object-cover" />
               {status !== "live" && (

@@ -66,22 +66,45 @@ const HTML = `<!doctype html>
         return null;
       }
 
+      // ── Frame watchdog ──────────────────────────────────────────────
+      // A "connected" camera can still deliver ZERO frames (phone tab
+      // backgrounded on Android, stalled uplink). Without this check the
+      // recording shows elegant BLACK instead of an honest placeholder.
+      // We track the last time video.currentTime advanced; if frozen > 4s
+      // while a participant is attached, show the offline overlay. When
+      // frames resume, hide it again.
+      var lastAdvanceAt = Date.now();
+      var lastPosition = 0;
+      setInterval(function () {
+        var t = videoEl.currentTime;
+        if (t > lastPosition + 0.1) {
+          lastAdvanceAt = Date.now();
+          lastPosition = t;
+          if (videoEl.srcObject) offlineEl.style.display = "none";
+        } else if (videoEl.srcObject && Date.now() - lastAdvanceAt > 4000) {
+          // Frames stopped flowing → honest placeholder over the black
+          offlineEl.style.display = "flex";
+        }
+      }, 1000);
+
       function attach() {
         var p = selectedParticipant();
         if (!p) {
           videoEl.srcObject = null;
           audioEl.srcObject = null;
           attachedIdentity = null;
+          lastAdvanceAt = 0; // force placeholder until frames resume
           offlineEl.style.display = "flex";
           return;
         }
-        offlineEl.style.display = "none";
         p.trackPublications.forEach(function (pub) {
           if (pub.kind !== "video" && pub.kind !== "audio") return;
           var isVideo = pub.kind === "video";
           if (!pub.isSubscribed) { try { pub.setSubscribed(true); } catch (e) {} }
           if (isVideo && pub.videoTrack && attachedIdentity !== p.identity) {
             videoEl.srcObject = null;
+            lastAdvanceAt = 0; // placeholder until first frames arrive
+            offlineEl.style.display = "flex";
             pub.videoTrack.attach(videoEl);
             attachedIdentity = p.identity;
           }

@@ -88,24 +88,61 @@ async function findActiveEgress(): Promise<any | null> {
  * if one is already active (or the persisted state matches a live egress),
  * it is reused. Returns the public playlist URL path.
  */
+// An egress is considered a ZOMBIE when it is listed active but its
+// handler process is gone (egress container restart leaves the Redis entry
+// pointing at a dead node — stopEgress on it times out and it blocks all
+// future broadcasts). Symptom: active for a while + no playlist file.
+const ZOMBIE_AFTER_MS = 90_000;
+
+async function isHealthyEgress(active: any, folder: string | null): Promise<boolean> {
+  // Fresh (< 90s old): give chrome time to boot and write the playlist.
+  const startedMs =
+    Number(active?.startedAt ?? BigInt(0)) > 1e15
+      ? Number(active.startedAt) / 1e6
+      : Number(active?.startedAt ?? 0) * 1000;
+  if (Date.now() - startedMs < ZOMBIE_AFTER_MS) return true;
+  // Older: healthy only if its playlist file exists on disk.
+  if (!folder) return false;
+  return existsSync(path.join(folder, "index.m3u8"));
+}
+
+async function killZombie(egressId: string): Promise<void> {
+  try {
+    await Promise.race([
+      egressClient().stopEgress(egressId),
+      new Promise((r) => setTimeout(r, 8000)), // stop on a zombie times out
+    ]);
+  } catch {}
+  console.warn("[hls-egress] zombie egress detected, force-cleared:", egressId);
+}
+
 export async function ensureHlsEgress(): Promise<HlsState> {
   // (called directly by /api/livekit-room POST and by the self-healing
   //  ensureOnce() wrapper — both idempotent)
-  // 1. Already running?
-  const active = await findActiveEgress().catch(() => null);
+  // 1. Already running — and actually healthy?
+  let active = await findActiveEgress().catch(() => null);
   if (active) {
     const existing = await readState();
-    if (existing && existing.egressId === active.egressId) return existing;
-    // Running but unknown to us (e.g. app restarted mid-match) — re-adopt.
-    const folder = existing?.folder ?? path.join(HLS_ROOT, String(Date.now()));
-    const st: HlsState = {
-      egressId: active.egressId,
-      folder,
-      playlistUrl: existing?.playlistUrl ?? `${PUBLIC_HLS_BASE}/${path.basename(folder)}/index.m3u8`,
-      startedAt: Number(active.startedAt ?? BigInt(Date.now() * 1e6)) / 1e6 || Date.now(),
-    };
-    await writeState(st);
-    return st;
+    const folder = existing?.egressId === active.egressId ? existing.folder : null;
+    if (!(await isHealthyEgress(active, folder))) {
+      // Zombie (handler died with a container restart) — clear it and
+      // start fresh below. Otherwise it blocks every future broadcast.
+      await killZombie(active.egressId);
+      active = null;
+    } else if (existing && existing.egressId === active.egressId) {
+      return existing;
+    } else if (active) {
+      // Healthy but unknown to us (e.g. app restarted mid-match) — adopt.
+      const adoptFolder = existing?.folder ?? path.join(HLS_ROOT, String(Date.now()));
+      const st: HlsState = {
+        egressId: active.egressId,
+        folder: adoptFolder,
+        playlistUrl: existing?.playlistUrl ?? `${PUBLIC_HLS_BASE}/${path.basename(adoptFolder)}/index.m3u8`,
+        startedAt: Date.now(),
+      };
+      await writeState(st);
+      return st;
+    }
   }
 
   // 2. Start a new one. Unique folder per broadcast session.
@@ -192,6 +229,55 @@ async function broadcastIsOn(): Promise<boolean> {
   }
 }
 
+// Track the last time a cameraman was actually connected (module-level,
+// survives across requests in this server process). Used to auto-stop a
+// stale broadcast: when the operator closes their browser WITHOUT pressing
+// stop, broadcast-state.json keeps selectedSlot set forever and the egress
+// would record a black placeholder for hours. After NO cameraman for 5
+// minutes we finalize the recording (playlist gets #EXT-X-ENDLIST → the
+// session becomes a usable VOD) and clear the stale state.
+let lastCameramanSeenAt = 0;
+const STALE_BROADCAST_MS = 5 * 60_000;
+
+async function anyCameramanConnected(): Promise<boolean> {
+  try {
+    const { RoomServiceClient } = await import("livekit-server-sdk");
+    const rs = new RoomServiceClient(LIVEKIT_URL, API_KEY, API_SECRET);
+    const participants = await rs.listParticipants(ROOM_NAME);
+    const online = participants.some((p: any) => {
+      try {
+        const meta = p.metadata ? JSON.parse(p.metadata) : {};
+        return meta.role === "cameraman" || !!meta.slot;
+      } catch {
+        return false;
+      }
+    });
+    if (online) lastCameramanSeenAt = Date.now();
+    return online;
+  } catch (e: any) {
+    // Room doesn't exist → definitely no cameraman. Transient API error →
+    // assume the last known state so we never false-positive a stop.
+    const msg = String(e?.message ?? "");
+    if (msg.includes("does not exist") || msg.includes("not found")) {
+      return false;
+    }
+    return lastCameramanSeenAt > 0;
+  }
+}
+
+async function clearStaleBroadcastState(): Promise<void> {
+  try {
+    const stateFile = path.join(PROJECT_ROOT, "db", "broadcast-state.json");
+    const raw = await readFile(stateFile, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed?.metadata?.selectedSlot != null) {
+      parsed.metadata.selectedSlot = null;
+      await writeFile(stateFile, JSON.stringify(parsed, null, 2));
+      console.log("[hls-egress] stale broadcast cleared (no cameraman for 5min)");
+    }
+  } catch {}
+}
+
 /**
  * Viewer-facing status. `ready` means the playlist file already exists on
  * disk (egress chrome booted + first segments written) — the player can
@@ -212,11 +298,33 @@ export async function getHlsStatus(): Promise<{
 
   // ── Self-healing: broadcast on + egress dead/missing → restart it ──
   if (!active && (await broadcastIsOn())) {
-    try {
-      const healed = await ensureOnce();
-      if (healed) active = await findActiveEgress().catch(() => null);
-    } catch (e: any) {
-      console.warn("[hls-egress] self-heal failed:", e?.message);
+    // Only self-heal when a cameraman is actually connected — otherwise we
+    // would resurrect recordings for broadcasts that are really over.
+    if (await anyCameramanConnected()) {
+      try {
+        const healed = await ensureOnce();
+        if (healed) active = await findActiveEgress().catch(() => null);
+      } catch (e: any) {
+        console.warn("[hls-egress] self-heal failed:", e?.message);
+      }
+    }
+  }
+
+  if (active) {
+    const online = await anyCameramanConnected();
+    // Reference point: the last time THIS process saw a cameraman, or the
+    // egress start time (covers a server restart mid-stale-broadcast).
+    const reference = Math.max(lastCameramanSeenAt, st?.startedAt ?? 0);
+    const stale =
+      (await broadcastIsOn()) &&
+      !online &&
+      Date.now() - reference > STALE_BROADCAST_MS;
+    if (stale) {
+      // Operator vanished without stopping → finalize the recording and
+      // clear the stale broadcast state so the site shows "off air".
+      await stopHlsEgress();
+      await clearStaleBroadcastState();
+      return { active: false, ready: false, url: null };
     }
   }
 

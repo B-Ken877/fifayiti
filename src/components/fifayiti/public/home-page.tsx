@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScoreBug } from "@/components/fifayiti/scorebug";
+import { BroadcastPlayer } from "@/components/fifayiti/tv/broadcast-player";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 interface TeamData {
@@ -119,6 +120,11 @@ export function HomePage() {
   const [loading, setLoading] = useState(true);
   const [countdown, setCountdown] = useState("");
   const [hasVideo, setHasVideo] = useState(false);
+  // HLS/DVR broadcast player state (Task 16). When the egress pipeline is
+  // ready, the hero switches from direct-WebRTC to the HLS BroadcastPlayer
+  // (~3s controlled latency + DVR controls). This is where most viewers
+  // actually watch — the player buttons live here too.
+  const [hlsSrc, setHlsSrc] = useState<string | null>(null);
 
   const roomRef = useRef<Room | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -165,6 +171,44 @@ export function HomePage() {
     currentTrackRef.current = track;
     if (videoRef.current) { track.attach(videoRef.current); setHasVideo(true); }
   };
+  // ── HLS/DVR status polling ────────────────────────────────────────
+  useEffect(() => {
+    const unsubAllVideo = () => {
+      const room = roomRef.current;
+      if (!room) return;
+      for (const p of room.remoteParticipants.values()) {
+        for (const pub of p.trackPublications.values()) {
+          if (pub.kind === Track.Kind.Video && pub.isSubscribed) {
+            try { pub.setSubscribed(false); } catch {}
+          }
+        }
+      }
+    };
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/livekit-hls", { cache: "no-store" });
+        if (!res.ok) return;
+        const d = await res.json();
+        if (d.active && d.ready && d.url) {
+          setHlsSrc((prev) => {
+            if (prev == null) {
+              // HLS carries the video now — stop downloading WebRTC tracks
+              unsubAllVideo();
+              return d.url;
+            }
+            return prev;
+          });
+        } else if (!d.active) {
+          // Egress stopped (broadcast ended) → back to WebRTC fallback
+          setHlsSrc(null);
+        }
+      } catch {}
+    };
+    poll();
+    const i = setInterval(poll, 5000);
+    return () => clearInterval(i);
+  }, []);
+
   // Attach ONLY the operator-selected camera's video to the hero player.
   // Bandwidth-critical: with autoSubscribe:false we subscribe ONLY the
   // selected camera's video track and actively UNSUBSCRIBE every other
@@ -348,6 +392,31 @@ export function HomePage() {
                       was conditionally rendered only when hasVideo was true —
                       but hasVideo could only become true after attaching to
                       this element, which never existed. Deadlock fixed. */}
+                  {hlsSrc ? (
+                    /* ── HLS/DVR BroadcastPlayer (Task 16) ──
+                       ~3s controlled latency + DVR timeline + controls.
+                       Overlays (AN DIRÈK badge, scorebug) render on top. */
+                    <BroadcastPlayer src={hlsSrc}>
+                      <div className="absolute top-2 right-2 md:top-3 md:right-3 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#D92D20] shadow-md">
+                        <span className="w-1 h-1 rounded-full bg-white animate-pulse" />
+                        <span className="text-[8px] md:text-[9px] font-extrabold text-white uppercase tracking-wider">An Dirèk</span>
+                      </div>
+                      {bug && (
+                        <div className="absolute top-2 left-2 md:top-3 md:left-3 z-10">
+                          <ScoreBug
+                            homeShort={bug.homeShort}
+                            homeColor={bug.homeColor}
+                            awayShort={bug.awayShort}
+                            awayColor={bug.awayColor}
+                            homeScore={bug.homeScore}
+                            awayScore={bug.awayScore}
+                            minute={bug.minute}
+                          />
+                        </div>
+                      )}
+                    </BroadcastPlayer>
+                  ) : (
+                  <>
                   <video
                     ref={videoRef}
                     autoPlay
@@ -385,6 +454,8 @@ export function HomePage() {
                         minute={bug.minute}
                       />
                     </div>
+                  )}
+                  </>
                   )}
                 </>
               );
