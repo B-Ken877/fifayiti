@@ -27,8 +27,23 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+export interface BroadcastReplayInfo {
+  url: string;
+  kind: string; // "GOL"
+  endsAt: number; // server safety net
+}
+
 interface BroadcastPlayerProps {
   src: string;
+  /**
+   * Active BROADCAST REPLAY (instant replay) if any. When set — and only
+   * while the viewer is at/near the live edge — the player automatically
+   * switches to the replay clip (5s normal + 10s slow-mo), shows a REPLAY
+   * badge, and returns to LIVE when it ends.
+   *
+   * Viewers who deliberately rewound (DVR) are NEVER interrupted.
+   */
+  replay?: BroadcastReplayInfo | null;
   children?: React.ReactNode;
 }
 
@@ -39,7 +54,14 @@ const fmt = (s: number) => {
   return `${m}:${String(sec).padStart(2, "0")}`;
 };
 
-export function BroadcastPlayer({ src, children }: BroadcastPlayerProps) {
+export function BroadcastPlayer({ src, replay, children }: BroadcastPlayerProps) {
+  // ── Instant replay state ──────────────────────────────────────────
+  // activeReplayUrl is the clip currently playing (null = live). Viewers
+  // more than REPLAY_LIVE_EDGE_TOLERANCE behind live keep their DVR
+  // position and are not interrupted.
+  const REPLAY_LIVE_EDGE_TOLERANCE = 8; // seconds
+  const [activeReplayUrl, setActiveReplayUrl] = useState<string | null>(null);
+  const latencyRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -59,6 +81,9 @@ export function BroadcastPlayer({ src, children }: BroadcastPlayerProps) {
   const [bufferedEnd, setBufferedEnd] = useState(0);
   const [stalled, setStalled] = useState(false);
 
+  // The clip currently loaded: the replay while one is active, else live.
+  const effectiveSrc = activeReplayUrl ?? src;
+
   // ── HLS setup ─────────────────────────────────────────────────────
   useEffect(() => {
     const video = videoRef.current;
@@ -67,7 +92,7 @@ export function BroadcastPlayer({ src, children }: BroadcastPlayerProps) {
     // Native HLS (iOS Safari) — no DVR controls customization needed there,
     // still gets live playback; hls.js everywhere else.
     if (!Hls.isSupported()) {
-      video.src = src;
+      video.src = effectiveSrc;
       return;
     }
 
@@ -122,14 +147,14 @@ export function BroadcastPlayer({ src, children }: BroadcastPlayerProps) {
     });
 
     hls.on(Hls.Events.FRAG_BUFFERED, () => setStalled(false));
-    hls.loadSource(src);
+    hls.loadSource(effectiveSrc);
     hls.attachMedia(video);
 
     return () => {
       hls.destroy();
       hlsRef.current = null;
     };
-  }, [src]);
+  }, [effectiveSrc]);
 
   // ── Time / live-edge tracking ─────────────────────────────────────
   useEffect(() => {
@@ -138,6 +163,12 @@ export function BroadcastPlayer({ src, children }: BroadcastPlayerProps) {
     const onTime = () => {
       if (seekingRef.current) return;
       setCurrentTime(video.currentTime);
+      { // keep the freshest latency for the instant-replay decision
+        const hls = hlsRef.current;
+        const edge = hls?.liveSyncPosition
+          ?? (video.seekable.length ? video.seekable.end(video.seekable.length - 1) : 0);
+        latencyRef.current = edge ? Math.max(0, edge - video.currentTime) : 0;
+      }
       const hls = hlsRef.current;
       const edge = hls?.liveSyncPosition ?? video.seekable.length ? (video.seekable.end(video.seekable.length - 1) || 0) : 0;
       if (edge && isFinite(edge)) setLiveEdge(edge);
@@ -161,6 +192,40 @@ export function BroadcastPlayer({ src, children }: BroadcastPlayerProps) {
       video.removeEventListener("waiting", onWaiting);
       video.removeEventListener("playing", onPlaying);
     };
+  }, []);
+
+  // ── INSTANT REPLAY orchestration ───────────────────────────────────
+  // When a broadcast replay is published:
+  //   • viewers at/near the live edge switch automatically;
+  //   • viewers who rewound (DVR) are left on their own timeline;
+  //   • when the clip ends (or the server state expires) → back to LIVE.
+  useEffect(() => {
+    if (replay?.active === false || !replay?.url) {
+      // Replay finished/expired server-side — if we're still on it, leave.
+      setActiveReplayUrl((cur) => (cur && cur !== src ? null : cur));
+      return;
+    }
+    if (replay?.url && !activeReplayUrl) {
+      if (latencyRef.current <= REPLAY_LIVE_EDGE_TOLERANCE) {
+        // At the live edge → take the broadcast replay like TV would.
+        setActiveReplayUrl(replay.url);
+        setControlsVisible(true);
+      }
+      // else: deliberately behind (DVR) — do NOT interrupt. The replay
+      // remains available in the archive for this viewer later.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replay?.url, replay?.active]);
+
+  // Video 'ended' → replay clip finished → return to LIVE automatically.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onEnded = () => {
+      setActiveReplayUrl((cur) => (cur ? null : cur));
+    };
+    video.addEventListener("ended", onEnded);
+    return () => video.removeEventListener("ended", onEnded);
   }, []);
 
   // ── Controls auto-hide (YouTube behavior) ─────────────────────────
@@ -273,6 +338,7 @@ export function BroadcastPlayer({ src, children }: BroadcastPlayerProps) {
   // ── Derived state ─────────────────────────────────────────────────
   const latency = liveEdge > 0 ? Math.max(0, liveEdge - currentTime) : 0;
   const isLive = latency < 6;
+  const inReplay = activeReplayUrl != null;
   const dur = Math.max(0.001, liveEdge - seekStart);
   const playedPct = Math.min(100, ((currentTime - seekStart) / dur) * 100);
   const bufferedPct = Math.min(100, ((bufferedEnd - seekStart) / dur) * 100);
@@ -311,6 +377,15 @@ export function BroadcastPlayer({ src, children }: BroadcastPlayerProps) {
 
       {/* Overlays from the TV page (scorebug, LIVE badge, goal flash…) */}
       {children}
+
+      {/* Instant replay banner — covers the clip load + the whole replay */}
+      {inReplay && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#116B3A] shadow-lg">
+          <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+          <span className="eyebrow text-white">INSTANT REPLAY</span>
+          <span className="eyebrow text-white/60">{activeReplayUrl?.includes("gol") ? "⚽ GOL" : ""}</span>
+        </div>
+      )}
 
       {/* Center state: buffering / paused / stalled */}
       {waiting && playing && (
@@ -413,8 +488,13 @@ export function BroadcastPlayer({ src, children }: BroadcastPlayerProps) {
 
           <div className="flex-1" />
 
-          {/* LIVE / RETOUNEN LIVE */}
-          {isLive ? (
+          {/* LIVE / REPLAY / RETOUNEN LIVE */}
+          {inReplay ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#116B3A]">
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+              <span className="eyebrow text-white">REPLAY</span>
+            </span>
+          ) : isLive ? (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#D92D20]">
               <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
               <span className="eyebrow text-white">LIVE</span>

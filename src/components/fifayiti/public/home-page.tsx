@@ -125,6 +125,10 @@ export function HomePage() {
   // (~3s controlled latency + DVR controls). This is where most viewers
   // actually watch — the player buttons live here too.
   const [hlsSrc, setHlsSrc] = useState<string | null>(null);
+  // Active broadcast instant replay (goal replay) — polled every 2s.
+  const [replayActive, setReplayActive] = useState<{
+    url: string; kind: string; endsAt: number;
+  } | null>(null);
 
   const roomRef = useRef<Room | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -171,6 +175,29 @@ export function HomePage() {
     currentTrackRef.current = track;
     if (videoRef.current) { track.attach(videoRef.current); setHasVideo(true); }
   };
+  // ── Instant replay polling (broadcast event, not archive) ─────────
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/replay-broadcast", { cache: "no-store" });
+        if (!res.ok) return;
+        const d = await res.json();
+        // NOTE: never compare endsAt with the CLIENT clock — phones with
+        // skewed clocks would drop the replay early. The server lazily
+        // expires the state; the player also returns on the video 'ended'
+        // event, which is the real authority.
+        if (d.active && d.url) {
+          setReplayActive({ url: d.url, kind: d.kind ?? "GOL", endsAt: d.endsAt });
+        } else {
+          setReplayActive(null);
+        }
+      } catch {}
+    };
+    poll();
+    const i = setInterval(poll, 2000);
+    return () => clearInterval(i);
+  }, []);
+
   // ── HLS/DVR status polling ────────────────────────────────────────
   useEffect(() => {
     const unsubAllVideo = () => {
@@ -396,7 +423,7 @@ export function HomePage() {
                     /* ── HLS/DVR BroadcastPlayer (Task 16) ──
                        ~3s controlled latency + DVR timeline + controls.
                        Overlays (AN DIRÈK badge, scorebug) render on top. */
-                    <BroadcastPlayer src={hlsSrc}>
+                    <BroadcastPlayer src={hlsSrc} replay={replayActive}>
                       <div className="absolute top-2 right-2 md:top-3 md:right-3 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#D92D20] shadow-md">
                         <span className="w-1 h-1 rounded-full bg-white animate-pulse" />
                         <span className="text-[8px] md:text-[9px] font-extrabold text-white uppercase tracking-wider">An Dirèk</span>

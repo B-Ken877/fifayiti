@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { triggerBroadcastReplay } from "@/lib/streaming/replay-engine";
 
 /**
  * POST /api/matches/[id]/events
@@ -72,6 +73,25 @@ export async function POST(
     let updatedMatch = match;
     if (Object.keys(updates).length > 0) {
       updatedMatch = await db.match.update({ where: { id }, data: updates });
+    }
+
+    // ── INSTANT REPLAY (Task 17) ──────────────────────────────────────
+    // A confirmed GOL triggers an automatic broadcast replay built from
+    // the ON-AIR HLS recording (previous 5s normal + same 5s at 0.5x).
+    // Fire-and-forget: replay failures NEVER affect the event or the live
+    // broadcast — the engine logs and gives up on its own.
+    if (body.kind === "GOL") {
+      void triggerBroadcastReplay({
+        kind: "GOL",
+        matchId: id,
+        eventId: event.id,
+        teamId: body.teamId ?? null,
+        playerInId: body.playerInId ?? null,
+        description: body.description ?? "",
+        minute,
+      }).catch((err) => {
+        console.error("[events] instant replay trigger failed:", err?.message ?? err);
+      });
     }
 
     return NextResponse.json({ event, match: updatedMatch }, { status: 201 });

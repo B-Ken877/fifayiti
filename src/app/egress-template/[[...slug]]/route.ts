@@ -103,6 +103,12 @@ const HTML = `<!doctype html>
           if (!pub.isSubscribed) { try { pub.setSubscribed(true); } catch (e) {} }
           if (isVideo && pub.videoTrack && attachedIdentity !== p.identity) {
             videoEl.srcObject = null;
+            // A NEW stream restarts currentTime at 0 — the watchdog's
+            // lastPosition must reset too, otherwise a camera switch looks
+            // like "frames stopped" and the placeholder covers live video
+            // (verified 2026-08-25: this broke the recording after the
+            // operator switched on-air cameras).
+            lastPosition = -1;
             lastAdvanceAt = 0; // placeholder until first frames arrive
             offlineEl.style.display = "flex";
             pub.videoTrack.attach(videoEl);

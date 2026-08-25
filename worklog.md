@@ -861,3 +861,40 @@ Stage Summary:
 - Recordings are honest (placeholder vs black), zombies self-clear, stale broadcasts finalize
 - Camera page warns when backgrounded
 
+---
+Task ID: 17
+Agent: Super Z (main agent)
+Task: Instant Goal Replay Engine — automatic broadcast replay on GOL
+
+Work Log:
+- Built src/lib/streaming/replay-engine.ts on the existing HLS/DVR pipeline:
+  wall-clock↔PDT mapping, flush-wait, segment-window extraction, 3-pass ffmpeg
+  (5s normal → setpts=2*PTS 30fps CFR true 0.5x slow-mo → VOD HLS package ~15s),
+  in-process lock, graceful failure (live never depends on replay)
+- GOL hook in /api/matches/[id]/events POST (fire-and-forget; event + score
+  update always succeed regardless of replay outcome)
+- /api/replay-broadcast (viewer state, lazy expiry) + /api/replays?matchId=
+  (archive metadata); persistent /var/www/fifayiti/replays/ storage (~5MB/goal)
+  + nginx /replays/ location
+- BroadcastPlayer: replay prop → auto-switch ONLY within 8s of live edge
+  (DVR viewers never interrupted), INSTANT REPLAY banner, REPLAY badge,
+  video 'ended' → automatic return to LIVE
+- Fixed during testing: (1) client-clock endsAt comparison removed (skewed
+  phone clocks would drop replays early — server lazy-expiry is the authority);
+  (2) egress template frame-watchdog position reset on camera switch (new
+  stream restarts currentTime at 0 — watchdog misfired and covered the video
+  with the placeholder after any on-air camera change)
+- E2E VERIFIED with two visually distinct cameras: replay 1 (Camera A on air)
+  shows testsrc2 in BOTH normal and slow-mo sections; camera switched to B
+  mid-match → replay 2 shows SMPTE bars (authentic on-air timeline preserved);
+  durations exact (5.0s + 9.97s = 15.0s playlist); live-edge viewer auto-switch
+  + auto-return; DVR viewer 32s behind NOT interrupted while its replay
+  broadcast; double-GOL 3s apart → second safely rejected, both events recorded;
+  early GOL (playlist not yet written) → graceful skip; GOL with no HLS session
+  → no crash, site healthy; all test artifacts cleaned from DB/disk
+- docs/STREAMING-ARCHITECTURE.md §8 (replay engine); git pushed; ZIP refreshed
+
+Stage Summary:
+- Operator presses GOL → audience sees 5s normal + 10s 0.5x slow-mo of exactly
+  what was on TV → automatic return to LIVE. Replay archived per match/team/player.
+

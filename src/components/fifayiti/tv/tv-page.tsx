@@ -40,6 +40,10 @@ export function TvPage() {
   // (~2-4s controlled latency + DVR) and unsubscribes the WebRTC video to
   // save bandwidth. The room connection stays for metadata + viewer count.
   const [hlsSrc, setHlsSrc] = useState<string | null>(null);
+  // Active broadcast instant replay (goal replay) — polled every 2s.
+  const [replayActive, setReplayActive] = useState<{
+    url: string; kind: string; endsAt: number;
+  } | null>(null);
 
   const roomRef = useRef<Room | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -60,6 +64,29 @@ export function TvPage() {
         if (next) setNextMatch(next);
       } catch {}
     })();
+  }, []);
+
+  // ── Instant replay polling (broadcast event, not archive) ─────────
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/replay-broadcast", { cache: "no-store" });
+        if (!res.ok) return;
+        const d = await res.json();
+        // NOTE: never compare endsAt with the CLIENT clock — phones with
+        // skewed clocks would drop the replay early. The server lazily
+        // expires the state; the player also returns on the video 'ended'
+        // event, which is the real authority.
+        if (d.active && d.url) {
+          setReplayActive({ url: d.url, kind: d.kind ?? "GOL", endsAt: d.endsAt });
+        } else {
+          setReplayActive(null);
+        }
+      } catch {}
+    };
+    poll();
+    const i = setInterval(poll, 2000);
+    return () => clearInterval(i);
   }, []);
 
   // ── HLS/DVR status polling ────────────────────────────────────────
@@ -233,7 +260,7 @@ export function TvPage() {
             /* ── HLS/DVR broadcast player (Task 15) ──
                ~2-4s controlled latency + DVR timeline + broadcast controls.
                Overlays (scorebug, live badge, goal flash) render on top. */
-            <BroadcastPlayer src={hlsSrc}>
+            <BroadcastPlayer src={hlsSrc} replay={replayActive}>
               {matchData && (
                 <div className="absolute top-2 left-2 md:top-3 md:left-3 z-10">
                   <ScoreBug

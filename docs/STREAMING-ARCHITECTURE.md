@@ -123,3 +123,49 @@ player up gently after network dips.
   transcodes it to AAC automatically.
 - **Server region**: the VPS is in Germany (~460-700ms RTT to Haiti).
   Moving to US-East would improve WebRTC paths and HLS fetch times.
+
+
+## 8. Instant Replay Engine (Task 17)
+
+The DVR foundation above powers automatic goal replays:
+
+```
+operator presses GOL (match-control → POST /api/matches/[id]/events)
+     ↓ (event recorded in DB; replay fired async, never blocks)
+replay-engine: capture wall-clock T
+     ↓
+wait for HLS flush (~3-4s — segments covering T to hit disk)
+     ↓
+map T → HLS media timeline via PROGRAM-DATE-TIME
+     ↓
+extract [T-5s, T] from the ON-AIR recording (concat of the exact segments)
+     ↓
+pass 1: 5s clip normal speed (x264)
+pass 2: same clip setpts=2*PTS @ 30fps CFR → true 0.5× slow motion
+pass 3: package [normal | slow-mo] as one ~15s VOD HLS playlist
+     ↓
+publish replay-broadcast state → viewers at live edge auto-switch
+     ↓
+5s normal → 10s slow-mo → video 'ended' → return to LIVE automatically
+```
+
+Key guarantees:
+
+| Requirement | Implementation |
+|---|---|
+| Uses the ON-AIR camera | The HLS recording IS the on-air feed (egress follows selectedSlot); camera switches mid-window are preserved in the broadcast timeline |
+| Accurate timestamps | PROGRAM-DATE-TIME per segment maps wall-clock ↔ media position directly |
+| 0.5× real slow motion | Baked with setpts=2*PTS + 30fps CFR (frame-doubled, broadcast standard) — not UI stretching |
+| DVR viewers not interrupted | Players only take the replay when within 8s of the live edge |
+| Multiple rapid triggers | In-process lock + state check → second trigger safely rejected (event still recorded) |
+| Replay failure never breaks live | Every step wrapped; failures log and return; broadcast state always cleared |
+| Storage efficiency | ~5MB standalone clip per goal in /var/www/fifayiti/replays/ (persistent, outside session retention); raw sessions still cleaned by cron |
+
+Components: `src/lib/streaming/replay-engine.ts` (engine),
+`/api/replay-broadcast` (viewer state), `/api/replays?matchId=` (archive),
+`BroadcastPlayer` replay prop (auto-switch + return),
+`/api/matches/[id]/events` POST hook (GOL → trigger, fire-and-forget).
+
+Future (designed for, not built): PRE_ROLL/POST_ROLL config, replay kinds
+beyond GOL (cards/saves), replay archive UI in the match Replay tab,
+highlight extraction from the same segment store.
