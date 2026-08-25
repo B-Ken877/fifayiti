@@ -270,8 +270,10 @@ model MatchEvent {
 
 enum MatchEventKind {
   GOL
+  FOT
   KAT_JON
   KAT_WOUJ
+  KONÈ
   RANPLASMAN
   KOMANSE
   MWATYE_TAN

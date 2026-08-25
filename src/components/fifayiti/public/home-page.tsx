@@ -165,6 +165,8 @@ export function HomePage() {
 
   const selectedSlot = roomState?.metadata?.selectedSlot ?? null;
   const isBroadcasting = selectedSlot !== null;
+  // Broadcast overlay event (Task 18) — from the room state poll
+  const overlayEvent = roomState?.metadata?.overlay ?? null;
   // Keep latest selectedSlot in a ref so LiveKit handlers read fresh value
   const selectedSlotRef = useRef<number | null>(null);
   useEffect(() => { selectedSlotRef.current = selectedSlot; }, [selectedSlot]);
@@ -424,6 +426,7 @@ export function HomePage() {
                        ~3s controlled latency + DVR timeline + controls.
                        Overlays (AN DIRÈK badge, scorebug) render on top. */
                     <BroadcastPlayer src={hlsSrc} replay={replayActive}>
+                      <BroadcastOverlay event={overlayEvent} />
                       <div className="absolute top-2 right-2 md:top-3 md:right-3 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#D92D20] shadow-md">
                         <span className="w-1 h-1 rounded-full bg-white animate-pulse" />
                         <span className="text-[8px] md:text-[9px] font-extrabold text-white uppercase tracking-wider">An Dirèk</span>

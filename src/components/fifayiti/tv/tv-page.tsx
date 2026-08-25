@@ -5,6 +5,7 @@ import { Radio, Calendar, MapPin, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScoreBug } from "@/components/fifayiti/scorebug";
 import { BroadcastPlayer } from "@/components/fifayiti/tv/broadcast-player";
+import { BroadcastOverlay, type OverlayEvent } from "@/components/fifayiti/tv/broadcast-overlay";
 
 const WS_URL = "wss://fifayiti.medikahaiti.site/livekit-ws";
 const ROOM_NAME = "fifayiti-broadcast";
@@ -44,6 +45,8 @@ export function TvPage() {
   const [replayActive, setReplayActive] = useState<{
     url: string; kind: string; endsAt: number;
   } | null>(null);
+  // Broadcast overlay (GÒL/Fot/Kat Jòn/etc animated overlays for viewers)
+  const [overlayEvent, setOverlayEvent] = useState<OverlayEvent | null>(null);
 
   const roomRef = useRef<Room | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -135,6 +138,8 @@ export function TvPage() {
         const meta = data.metadata ?? null;
         const slot = meta?.selectedSlot ?? null;
         setSelectedSlot(slot);
+        // Broadcast overlay event (Task 18)
+        setOverlayEvent(meta?.overlay ?? null);
         if (slot === null) {
           // Broadcast is off — clear stale scorebug/score-panel data so the
           // page can never show "An Dirèk" with no video.
@@ -261,6 +266,7 @@ export function TvPage() {
                ~2-4s controlled latency + DVR timeline + broadcast controls.
                Overlays (scorebug, live badge, goal flash) render on top. */
             <BroadcastPlayer src={hlsSrc} replay={replayActive}>
+              <BroadcastOverlay event={overlayEvent} />
               {matchData && (
                 <div className="absolute top-2 left-2 md:top-3 md:left-3 z-10">
                   <ScoreBug
@@ -301,6 +307,7 @@ export function TvPage() {
           )}
           {hasVideo && !hlsSrc && (
             <>
+              <BroadcastOverlay event={overlayEvent} />
               {/* Scorebug — TOP-LEFT, compact broadcast style.
                   Clock is in SECONDS in matchData — convert to minutes. */}
               {matchData && (

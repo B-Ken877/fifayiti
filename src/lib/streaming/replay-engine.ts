@@ -57,7 +57,7 @@ const DEFAULT_WINDOW: ReplayWindow = { preRollMs: 5000, postRollMs: 0, slowMotio
 
 // Event kinds that trigger a broadcast replay. Extendable tomorrow:
 // KAT_WOUJ, KAT_JON, SAV, BIG_CHANCE …
-const REPLAY_KINDS: string[] = ["GOL"];
+const REPLAY_KINDS: string[] = ["GOL", "FOT", "KAT_JON", "KAT_WOUJ"];
 
 // In-process lock so rapid consecutive triggers can't corrupt each other.
 let replayInFlight = false;

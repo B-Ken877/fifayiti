@@ -898,3 +898,26 @@ Stage Summary:
 - Operator presses GOL → audience sees 5s normal + 10s 0.5x slow-mo of exactly
   what was on TV → automatic return to LIVE. Replay archived per match/team/player.
 
+---
+Task ID: 18
+Agent: Super Z (main agent)
+Task: FIFAYITI Match Operations System V1 — Operator Session (Broadcast Production Sprint)
+
+Work Log:
+- Prisma: added FOT + KONÈ to MatchEventKind enum (migration via db push)
+- Server-authoritative match clock engine (/api/match-clock): pure state machine (no ticking, no browser clock dependency), computes live time from wall-clock + accumulatedMs, survives restarts, injected into /api/livekit-room GET so every viewer's scorebug shows the authoritative minute
+- Broadcast overlay system: BroadcastOverlay component with animated overlays for GOL (full-screen green celebration + team color), FOT (orange banner), KAT_JON (yellow card rising), KAT_WOUJ (red card dramatic), RANPLASMAN (blue substitution panel), KONÈ (corner banner), MWATYE_TAN/DEZYEM_MITAN/FEN_MATCH (match state banners). Event queue prevents chaos (rapid events play in order). Overlays auto-dismiss after per-type duration. Don't block replay or DVR.
+- Overlay state: events POST writes to db/broadcast-overlay.json; /api/livekit-room GET injects into metadata with 10s TTL auto-expiry; TV + home pages poll and render
+- Extended replay triggers: REPLAY_KINDS now includes GOL + FOT + KAT_JON + KAT_WOUJ (all fire the same replay engine — on-air HLS extraction + 5s normal + 10s slow-mo + auto-return to LIVE)
+- Statistics API (/api/matches/[id]/statistics): live counts for goals/yellow/red/fouls/corners/substitutions, per-team breakdown
+- Match-control types: FOT (Fot, orange) + KONÈ (Kònè, gray) added to KIND_META + EVENT_BUTTONS + buildDescription — in natural Haitian Creole
+- Audit log: every event_create appended to db/audit-log.jsonl with full metadata (operator, action, timestamp, matchId, eventId, kind, team, players, minute, half)
+- E2E VERIFIED: GOL → overlay visible in room state at +5s (kind:GOL, teamShort:KNPV), replay triggered (KAT_JON rejected as "busy"), all 4 event types created (GOL/FOT/KONÈ/KAT_JON), statistics correct (1 goal/1 yellow/1 foul/1 corner), audit log with 4 entries
+- All UI text in natural Haitian Creole (Gòl/Fot/Kat Jòn/Kat Wouj/Chanjman/Kònè/Poz/Dezyèm Mi-Tan/Fen Match la)
+
+Stage Summary:
+- Operator presses GOL/Fot/Kat Jòn/Kat Wouj → broadcast overlay animation + instant replay + statistics update + audit log + timeline entry — all synchronized
+- Match clock is server-authoritative (no browser dependency, survives reconnects)
+- Match-control has Fot + Kònè buttons alongside existing GOL/Kat Jòn/Kat Wouj/Ranplasman
+- Statistics available live via API for the TV page + future viewer stats
+

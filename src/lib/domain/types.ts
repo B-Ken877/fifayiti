@@ -98,13 +98,15 @@ export type MatchStatus =
 /**
  * Kind of event recorded during a match.
  * Phase events (KOMANSE / MWATYE_TAN / DEZYEM_MITAN / FEN_MATCH) carry no
- * team/player; flow events (GOL / KAT_JON / KAT_WOUJ / RANPLASMAN) do.
+ * team/player; flow events (GOL / FOT / KAT_JON / KAT_WOUJ / RANPLASMAN / KONÈ) do.
  */
 export type MatchEventKind =
   | "GOL"
   | "KAT_JON"
   | "KAT_WOUJ"
   | "RANPLASMAN"
+  | "FOT"
+  | "KONÈ"
   | "KOMANSE"
   | "MWATYE_TAN"
   | "DEZYEM_MITAN"

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { RoomServiceClient } from "livekit-server-sdk";
 import { ensureHlsEgress, stopHlsEgress } from "@/lib/streaming/hls-egress";
+import { getLiveClock } from "@/lib/streaming/match-clock";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
@@ -184,6 +185,40 @@ export async function GET(req: NextRequest) {
     if (metadata == null) {
       metadata = await readPersistedState();
     }
+
+    // ── Inject server-authoritative match clock (Task 18) ──────────
+    // The operator's match-clock engine ticks on the server (pure state
+    // machine, no browser dependency). We inject the authoritative time
+    // into metadata.matchData.clock so every viewer's scorebug shows the
+    // correct minute — no clock drift on reconnect.
+    try {
+      const clock = await getLiveClock();
+      if (clock.running || clock.seconds > 0) {
+        if (!metadata) metadata = {};
+        if (!metadata.matchData) metadata.matchData = {};
+        metadata.matchData.clock = clock.seconds;
+        metadata.matchData.half = clock.half;
+        metadata.matchData.stoppageSeconds = clock.stoppageSeconds;
+      }
+    } catch {}
+
+    // ── Inject broadcast overlay (Task 18) ──────────────────────────
+    // The events POST writes the latest overlay event to
+    // db/broadcast-overlay.json. We inject it here so viewers' players
+    // can render the animated overlay (GÒL/Fot/Kat Jòn/Kat Wouj/etc).
+    // Auto-expire after 10s (max overlay duration is 8s + safety).
+    try {
+      const overlayPath = path.join(PROJECT_ROOT, "db", "broadcast-overlay.json");
+      const overlayRaw = await readFile(overlayPath, "utf-8");
+      const overlayData = JSON.parse(overlayRaw);
+      if (overlayData?.overlay) {
+        const age = Date.now() - (overlayData.overlay.createdAt ?? 0);
+        if (age < 10000) {
+          if (!metadata) metadata = {};
+          metadata.overlay = overlayData.overlay;
+        }
+      }
+    } catch {}
 
     // ── Phantom-live guard (with reconnect grace) ──
     // If the saved state says a slot is on air but NO cameraman is connected

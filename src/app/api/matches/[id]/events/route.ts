@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import path from "path";
 import { triggerBroadcastReplay } from "@/lib/streaming/replay-engine";
 
 /**
@@ -75,14 +76,91 @@ export async function POST(
       updatedMatch = await db.match.update({ where: { id }, data: updates });
     }
 
-    // ── INSTANT REPLAY (Task 17) ──────────────────────────────────────
-    // A confirmed GOL triggers an automatic broadcast replay built from
-    // the ON-AIR HLS recording (previous 5s normal + same 5s at 0.5x).
-    // Fire-and-forget: replay failures NEVER affect the event or the live
-    // broadcast — the engine logs and gives up on its own.
-    if (body.kind === "GOL") {
+    // ── BROADCAST OVERLAY + INSTANT REPLAY (Tasks 17-18) ──────────────
+    // Every operator event pushes a broadcast overlay (animated visual for
+    // viewers) and, for replay-eligible kinds (GOL, FOT, KAT_JON, KAT_WOUJ),
+    // fires the instant replay engine. Both are fire-and-forget: failures
+    // NEVER affect the event or the live broadcast.
+    const REPLAY_KINDS = ["GOL", "FOT", "KAT_JON", "KAT_WOUJ"];
+
+    // Build the overlay event for viewers
+    const overlayEvent: any = {
+      id: event.id,
+      kind: body.kind,
+      teamShort: undefined, // resolved from team lookup below
+      teamColor: undefined,
+      playerInName: body.playerInId ? undefined : undefined, // resolved by player lookup
+      playerOutName: undefined,
+      minute,
+      half,
+      createdAt: Date.now(),
+    };
+
+    // Resolve team + player names for the overlay (best-effort, non-blocking)
+    try {
+      if (body.teamId) {
+        const team = await db.team.findUnique({ where: { id: body.teamId } });
+        if (team) {
+          overlayEvent.teamShort = team.shortName;
+          overlayEvent.teamColor = team.primaryColor;
+        }
+      }
+      if (body.playerInId) {
+        const pIn = await db.player.findUnique({ where: { id: body.playerInId } });
+        if (pIn) overlayEvent.playerInName = `${pIn.firstName} ${pIn.lastName}`;
+      }
+      if (body.playerOutId) {
+        const pOut = await db.player.findUnique({ where: { id: body.playerOutId } });
+        if (pOut) overlayEvent.playerOutName = `${pOut.firstName} ${pOut.lastName}`;
+      }
+    } catch {}
+
+    // Push overlay to broadcast state (viewers see it via /api/livekit-room poll)
+    try {
+      const stateFile = path.join(
+        process.cwd().replace(/\.next\/standalone$/, ""),
+        "db",
+        "broadcast-overlay.json"
+      );
+      const fs = await import("fs/promises");
+      await fs.writeFile(stateFile, JSON.stringify({
+        overlay: overlayEvent,
+        savedAt: new Date().toISOString(),
+      }, null, 2));
+    } catch (e: any) {
+      console.warn("[events] overlay write failed:", e?.message);
+    }
+
+    // Audit log (append-only)
+    try {
+      const auditFile = path.join(
+        process.cwd().replace(/\.next\/standalone$/, ""),
+        "db",
+        "audit-log.jsonl"
+      );
+      const fs = await import("fs/promises");
+      const entry = JSON.stringify({
+        ts: new Date().toISOString(),
+        action: "event_create",
+        matchId: id,
+        eventId: event.id,
+        kind: body.kind,
+        teamId: body.teamId ?? null,
+        playerInId: body.playerInId ?? null,
+        playerOutId: body.playerOutId ?? null,
+        minute,
+        half,
+        description: body.description ?? "",
+      }) + "\n";
+      await fs.appendFile(auditFile, entry);
+    } catch (e: any) {
+      console.warn("[events] audit log failed:", e?.message);
+    }
+
+    // Instant replay for eligible kinds
+    if (REPLAY_KINDS.includes(body.kind)) {
       void triggerBroadcastReplay({
-        kind: "GOL",
+        kind: body.kind,
         matchId: id,
         eventId: event.id,
         teamId: body.teamId ?? null,

@@ -33,6 +33,8 @@ export const KIND_META: Record<
   KOMANSE: { label: "Kòmanse", icon: Play, color: "#116B3A", bg: "#116B3A" },
   MWATYE_TAN: { label: "Mwatye tan", icon: Pause, color: "#F4C400", bg: "#F4C400" },
   DEZYEM_MITAN: { label: "Dezyèm mitan", icon: Play, color: "#116B3A", bg: "#116B3A" },
+  FOT: { label: "Fot", icon: Flag, color: "#F97316", bg: "#F97316" },
+  KONÈ: { label: "Kònè", icon: Flag, color: "#667085", bg: "#667085" },
   FEN_MATCH: { label: "Fen match", icon: Flag, color: "#D92D20", bg: "#D92D20" },
 };
 
@@ -60,6 +62,8 @@ export const EVENT_BUTTONS: {
   { kind: "KAT_JON", label: "Kat jòn", icon: Square, color: "#F4C400" },
   { kind: "KAT_WOUJ", label: "Kat wouj", icon: SquareArrowUp, color: "#D92D20" },
   { kind: "RANPLASMAN", label: "Ranplasman", icon: Repeat, color: "#667085" },
+  { kind: "FOT", label: "Fot", icon: Flag, color: "#F97316" },
+  { kind: "KONÈ", label: "Kònè", icon: Flag, color: "#667085" },
 ];
 
 /** Kinds that don't need team/player selection (no-team events). */
@@ -95,6 +99,10 @@ export function buildDescription(
       return "Mwatye tan";
     case "DEZYEM_MITAN":
       return "Dezyèm mitan kòmanse";
+    case "FOT":
+      return `Fot — ${teamName}`;
+    case "KONÈ":
+      return `Kònè — ${teamName}`;
     case "FEN_MATCH":
       return "Fen match";
     default:
