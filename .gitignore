@@ -38,9 +38,12 @@ server.log
 .env.production.local
 .env.production
 
-# Database (SQLite local file)
+# Database (SQLite) — prisma/dev.db IS COMMITTED deliberately: it is the
+# durable seed/baseline data store that survives Vercel redeployments
+# (runtime writes on Vercel are ephemeral; the repo copy is the source of truth)
 db/
 *.db
+!prisma/dev.db
 *.db-journal
 
 # Uploads (user-generated content)
