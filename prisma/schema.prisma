@@ -6,7 +6,9 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
+  // Hardcoded by design — no env vars. Path is relative to this schema
+  // file (prisma/dev.db). Move the file if you need a different location.
+  url      = "file:./dev.db"
 }
 
 // ───────── Auth ─────────

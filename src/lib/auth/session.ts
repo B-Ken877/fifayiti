@@ -12,20 +12,14 @@
 
 import { createHmac, timingSafeEqual } from "crypto";
 import type { FifayitiRole } from "./credentials";
+import { FIFAYITI_AUTH_SECRET } from "./secret";
 
 const COOKIE_NAME = "fifayiti-session";
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 8; // 8 hours — covers a match day
 
-/** Read the HMAC secret from env. Crash if missing — fail-closed. */
+/** Hardcoded HMAC secret (see src/lib/auth/secret.ts). */
 function getSecret(): string {
-  const s = process.env.FIFAYITI_AUTH_SECRET;
-  if (!s || s.length < 32) {
-    throw new Error(
-      "FIFAYITI_AUTH_SECRET is missing or too short (<32 chars). " +
-      "Generate one with: openssl rand -hex 32",
-    );
-  }
-  return s;
+  return FIFAYITI_AUTH_SECRET;
 }
 
 interface SessionPayload {

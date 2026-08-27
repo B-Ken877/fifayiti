@@ -21,15 +21,15 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
+import { FIFAYITI_AUTH_SECRET } from "@/lib/auth/secret";
 
 export const runtime = "nodejs";
 
 const COOKIE_NAME = "fifayiti-session";
 
+/** Hardcoded HMAC secret (see src/lib/auth/secret.ts). */
 function getSecret(): string {
-  const s = process.env.FIFAYITI_AUTH_SECRET;
-  if (!s || s.length < 32) return "";
-  return s;
+  return FIFAYITI_AUTH_SECRET;
 }
 
 function verifyToken(token: string): string | null {
