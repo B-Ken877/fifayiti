@@ -184,36 +184,67 @@ export async function GET(req: NextRequest) {
       metadata = await readPersistedState();
     }
 
-    // ── Inject server-authoritative match clock (Task 18) ──────────
-    // The operator's match-clock engine ticks on the server (pure state
-    // machine, no browser dependency). We inject the authoritative time
-    // into metadata.matchData.clock so every viewer's scorebug shows the
-    // correct minute — no clock drift on reconnect.
+    // ── Live clock ──────────────────────────────────────────────────
+    // Preferred source: matchData.clockEpoch + running (pushed by the
+    // events/phase routes with every operator action — works on Vercel
+    // where no filesystem state survives). The clock advances smoothly
+    // between the operator tab's 5s tick syncs because we interpolate
+    // against the server's wall clock.
+    //
+    // RUNAWAY GUARD: interpolation only applies within MAX_DRIFT of the
+    // last anchor. If the operator tab closes (no more 5s tick pushes),
+    // the clock FREEZES at the last synced value instead of climbing
+    // past 30' forever. Ticks resume → fresh anchor → clock resumes.
+    const MAX_INTERPOLATION_MS = 15_000;
     try {
-      const clock = await getLiveClock();
-      if (clock.running || clock.seconds > 0) {
-        if (!metadata) metadata = {};
-        if (!metadata.matchData) metadata.matchData = {};
-        metadata.matchData.clock = clock.seconds;
-        metadata.matchData.half = clock.half;
-        metadata.matchData.stoppageSeconds = clock.stoppageSeconds;
+      const md = metadata?.matchData;
+      if (md && typeof md.clockEpoch === "number" && md.running) {
+        const drift = Date.now() - md.clockEpoch;
+        if (drift <= MAX_INTERPOLATION_MS) {
+          const elapsed = Math.max(0, Math.floor(drift / 1000));
+          md.clock = (md.clock ?? 0) + elapsed;
+        }
+        // (drift > cap → leave md.clock at the last synced value)
       }
     } catch {}
 
-    // ── Inject broadcast overlay (Task 18) ──────────────────────────
-    // The events POST writes the latest overlay event to
-    // db/broadcast-overlay.json. We inject it here so viewers' players
-    // can render the animated overlay (GÒL/Fot/Kat Jòn/Kat Wouj/etc).
-    // Auto-expire after 10s (max overlay duration is 8s + safety).
+    // Fallback (sandbox/standalone): the file-based clock state machine.
+    // On Vercel this file can't exist — skip silently.
     try {
-      const overlayPath = path.join(PROJECT_ROOT, "db", "broadcast-overlay.json");
-      const overlayRaw = await readFile(overlayPath, "utf-8");
-      const overlayData = JSON.parse(overlayRaw);
-      if (overlayData?.overlay) {
-        const age = Date.now() - (overlayData.overlay.createdAt ?? 0);
-        if (age < 10000) {
+      const md = metadata?.matchData;
+      const hasEpoch = md && typeof md.clockEpoch === "number";
+      if (!hasEpoch) {
+        const clock = await getLiveClock();
+        if (clock.running || clock.seconds > 0) {
           if (!metadata) metadata = {};
-          metadata.overlay = overlayData.overlay;
+          if (!metadata.matchData) metadata.matchData = {};
+          metadata.matchData.clock = clock.seconds;
+          metadata.matchData.half = clock.half;
+          metadata.matchData.stoppageSeconds = clock.stoppageSeconds;
+        }
+      }
+    } catch {}
+
+    // ── Broadcast overlay (GÒL / kat jòn animations) ──────────────
+    // Preferred source: the overlay embedded in the room metadata (pushed
+    // by the events route — works on Vercel's read-only FS). Auto-expires
+    // after 10s. File fallback kept for sandbox builds that only wrote the
+    // local file (legacy path).
+    try {
+      const metaOverlay = metadata?.overlay;
+      const metaFresh =
+        metaOverlay && Date.now() - (metaOverlay.createdAt ?? 0) < 10000;
+      if (!metaFresh) {
+        if (metadata) delete metadata.overlay;
+        const overlayPath = path.join(PROJECT_ROOT, "db", "broadcast-overlay.json");
+        const overlayRaw = await readFile(overlayPath, "utf-8");
+        const overlayData = JSON.parse(overlayRaw);
+        if (overlayData?.overlay) {
+          const age = Date.now() - (overlayData.overlay.createdAt ?? 0);
+          if (age < 10000) {
+            if (!metadata) metadata = {};
+            metadata.overlay = overlayData.overlay;
+          }
         }
       }
     } catch {}

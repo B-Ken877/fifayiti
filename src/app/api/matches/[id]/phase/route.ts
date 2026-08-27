@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { pushBroadcastMatchUpdate } from "@/lib/streaming/broadcast-state";
 
 /**
  * POST /api/matches/[id]/phase
@@ -72,6 +73,14 @@ export async function POST(
     }
 
     const updated = await db.match.update({ where: { id }, data: updates });
+
+    // Push the fresh clock/phase to the broadcast room (the TV's data
+    // source). The payload carries clockEpoch + running so GET
+    // /api/livekit-room can interpolate a continuously-advancing clock
+    // between the operator tab's 5s tick syncs — no server filesystem
+    // needed (works on Vercel). Fire-and-forget: never blocks the tick.
+    void pushBroadcastMatchUpdate(id).catch(() => {});
+
     return NextResponse.json({ match: updated });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });

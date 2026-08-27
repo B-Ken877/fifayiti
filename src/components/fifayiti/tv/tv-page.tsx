@@ -83,17 +83,28 @@ export function TvPage() {
     replayEngineRef.current?.attachLiveVideo(videoRef.current);
   });
 
+  // Live match info + events — polled every 10s so the events tab and
+  // match panels follow operator work without a reload.
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    const load = async () => {
       try {
-        const mRes = await fetch("/api/matches").then(r => r.json());
+        const mRes = await fetch("/api/matches", { cache: "no-store" }).then(r => r.json());
+        if (cancelled) return;
         const all = mRes.matches ?? [];
         const live = all.find((m: any) => m.status === "AN_DIRÈK");
-        if (live) { setMatchInfo(live); const eRes = await fetch(`/api/matches/${live.id}`).then(r => r.json()); if (eRes.match?.events) setEvents(eRes.match.events); }
+        if (live) {
+          setMatchInfo(live);
+          const eRes = await fetch(`/api/matches/${live.id}`, { cache: "no-store" }).then(r => r.json());
+          if (!cancelled && eRes.match?.events) setEvents(eRes.match.events);
+        }
         const next = all.filter((m: any) => m.status === "PWOGRAM").sort((a: any,b: any) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime())[0];
-        if (next) setNextMatch(next);
+        if (!cancelled && next) setNextMatch(next);
       } catch {}
-    })();
+    };
+    load();
+    const i = setInterval(load, 10000);
+    return () => { cancelled = true; clearInterval(i); };
   }, []);
 
   // ── Instant replay polling (broadcast event, not archive) ─────────

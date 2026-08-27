@@ -72,18 +72,51 @@ export default function OperatorPage() {
   useEffect(() => {
     let cancelled = false;
 
-    (async () => {
+    // ── Live matches/teams refresh (every 15s) ──────────────────────
+    // Previously fetched ONCE at mount — every later saveRoomState() then
+    // pushed STALE scores to the TV (overwriting fresh server pushes).
+    // Now the list stays fresh, and when the on-air match's data changes
+    // we re-push it so an idling control page keeps the TV accurate too.
+    const loadMatches = async () => {
       try {
-        // Fetch matches + teams
         const [mRes, tRes] = await Promise.all([
-          fetch("/api/matches").then((r) => r.json()),
-          fetch("/api/teams").then((r) => r.json()),
+          fetch("/api/matches", { cache: "no-store" }).then((r) => r.json()),
+          fetch("/api/teams", { cache: "no-store" }).then((r) => r.json()),
         ]);
         if (cancelled) return;
-        setMatches(mRes.matches ?? []);
+        const fresh = mRes.matches ?? [];
         const tm: Record<string, any> = {};
         for (const t of tRes.teams ?? []) tm[t.id] = t;
+        setMatches(fresh);
         setTeams(tm);
+
+        // Keep the on-air scorebug fresh: if a match is selected and its
+        // DB row changed (score/clock/half), rebuild + re-push matchData.
+        const cur = matchDataRef.current;
+        if (cur?.matchId) {
+          const m = fresh.find((mm: any) => mm.id === cur.matchId);
+          if (m) {
+            const next = buildMatchData(m, tm);
+            const changed =
+              next.homeScore !== cur.homeScore ||
+              next.awayScore !== cur.awayScore ||
+              next.half !== cur.half ||
+              Math.abs((next.clock ?? 0) - (cur.clock ?? 0)) >= 5;
+            if (changed) {
+              matchDataRef.current = next;
+              setMatchData(next);
+              if (selectedSlotRef.current !== null) {
+                saveRoomState(selectedSlotRef.current, next);
+              }
+            }
+          }
+        }
+      } catch {}
+    };
+
+    (async () => {
+      try {
+        await loadMatches();
 
         // Get token
         const tokenRes = await fetch("/api/livekit-token", {
@@ -224,8 +257,11 @@ export default function OperatorPage() {
       }
     })();
 
+    const refreshTimer = setInterval(loadMatches, 15000);
+
     return () => {
       cancelled = true;
+      clearInterval(refreshTimer);
       if (roomRef.current) roomRef.current.disconnect();
       // Clear any pending reconnect-grace timers
       for (const t of Object.values(reconnectTimers.current)) clearTimeout(t);
@@ -276,6 +312,10 @@ export default function OperatorPage() {
     awayScore: m.awayScore ?? 0,
     clock: m.clock ?? 0,
     half: m.half ?? "PRE",
+    // clock interpolation anchors — GET /api/livekit-room advances the
+    // clock smoothly between pushes (see broadcast-state.ts)
+    clockEpoch: Date.now(),
+    running: m.status === "AN_DIRÈK" && (m.half === "1" || m.half === "2"),
   });
 
   // ─── Auto-pick the most relevant match: live first, else next upcoming ───

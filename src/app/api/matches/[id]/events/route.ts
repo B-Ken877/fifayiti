@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import path from "path";
 import { triggerBroadcastReplay } from "@/lib/streaming/replay-engine";
+import { pushBroadcastMatchUpdate } from "@/lib/streaming/broadcast-state";
 
 /**
  * POST /api/matches/[id]/events
@@ -115,7 +116,17 @@ export async function POST(
       }
     } catch {}
 
-    // Push overlay to broadcast state (viewers see it via /api/livekit-room poll)
+    // ── PUSH TO THE BROADCAST ROOM (the TV's data source) ────────────
+    // The TV scorebug polls the LiveKit room metadata every 2s. Pushing
+    // the fresh score + overlay there is what makes the operator's work
+    // appear on viewers' screens — works on Vercel AND the sandbox
+    // (no local filesystem involved). Overlay lives IN the metadata so
+    // the read-only serverless FS can no longer swallow it.
+    void pushBroadcastMatchUpdate(id, { overlay: overlayEvent }).catch(() => {});
+
+    // Best-effort local file copy (sandbox/standalone only — Vercel's FS
+    // is read-only and silently skips this; the room metadata above is
+    // the authoritative channel everywhere).
     try {
       const stateFile = path.join(
         process.cwd().replace(/\.next\/standalone$/, ""),

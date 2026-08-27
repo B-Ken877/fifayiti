@@ -134,22 +134,37 @@ export function HomePage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const currentTrackRef = useRef<RemoteTrack | null>(null);
 
+  // ── Live data polling ────────────────────────────────────────────
+  // Scores/schedule refresh every 10s so operator work (gòl, kat, fen
+  // match…) appears on the site WITHOUT a manual reload — previously
+  // this fetched once at mount and froze until F5.
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    const load = async () => {
       try {
         const [mRes, tRes, cRes] = await Promise.all([
-          fetch("/api/matches").then(r => r.json()),
-          fetch("/api/teams").then(r => r.json()),
-          fetch("/api/competitions/active").then(r => r.json()),
+          fetch("/api/matches", { cache: "no-store" }).then(r => r.json()),
+          fetch("/api/teams", { cache: "no-store" }).then(r => r.json()),
+          fetch("/api/competitions/active", { cache: "no-store" }).then(r => r.json()),
         ]);
+        if (cancelled) return;
         const all = (mRes.matches ?? []) as MatchData[];
         setLiveMatch(all.find(m => m.status === "AN_DIRÈK") ?? null);
         setUpcoming(all.filter(m => m.status === "PWOGRAM").sort((a,b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime()));
         setFinished(all.filter(m => m.status === "FINI").sort((a,b) => new Date(b.kickoff).getTime() - new Date(a.kickoff).getTime()));
         setTeams(tRes.teams ?? []);
         setCompetition(cRes.competition ?? null);
-      } catch {} finally { setLoading(false); }
-    })();
+      } catch {} finally { if (!cancelled) setLoading(false); }
+    };
+    load();
+    const i = setInterval(load, 10000);
+    const onVisible = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(i);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   useEffect(() => {
