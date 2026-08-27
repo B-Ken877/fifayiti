@@ -26,6 +26,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { planReplay, DEFAULT_REPLAY_WINDOW, type ReplayWindowConfig } from "@/lib/replay/replay-sequence";
 
 export interface BroadcastReplayInfo {
   url: string;
@@ -162,6 +163,7 @@ export function BroadcastPlayer({ src, replay, children }: BroadcastPlayerProps)
     if (!video) return;
     const onTime = () => {
       if (seekingRef.current) return;
+      stepDvrReplay();
       setCurrentTime(video.currentTime);
       { // keep the freshest latency for the instant-replay decision
         const hls = hlsRef.current;
@@ -192,7 +194,7 @@ export function BroadcastPlayer({ src, replay, children }: BroadcastPlayerProps)
       video.removeEventListener("waiting", onWaiting);
       video.removeEventListener("playing", onPlaying);
     };
-  }, []);
+  }, [stepDvrReplay]);
 
   // ── INSTANT REPLAY orchestration ───────────────────────────────────
   // When a broadcast replay is published:
@@ -216,6 +218,68 @@ export function BroadcastPlayer({ src, replay, children }: BroadcastPlayerProps)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replay?.url, replay?.active]);
+
+  // ── DVR SEEK-BASED INSTANT REPLAY (LiveKit Cloud data channel) ───
+  // No server clip exists on the Cloud architecture — instead the TV page
+  // forwards the server's data message and this player replays straight
+  // from its own DVR buffer: seek 5s back, 1×, then the same window at
+  // 0.5×, then jump to the live edge. Viewers who rewound are skipped
+  // (latency check) — never interrupt a deliberate DVR position.
+  const dvrReplayRef = useRef<
+    { phase: "normal" | "slowmo"; clipStart: number; clipEnd: number; cfg: ReplayWindowConfig } | null
+  >(null);
+  const [dvrReplayActive, setDvrReplayActive] = useState(false);
+
+  useEffect(() => {
+    const onInstantReplay = (e: Event) => {
+      const msg: any = (e as CustomEvent).detail ?? {};
+      if (dvrReplayRef.current) return; // one at a time (v1 policy)
+      const video = videoRef.current;
+      if (!video || !hlsRef.current) return;
+      if (latencyRef.current > REPLAY_LIVE_EDGE_TOLERANCE) return; // behind LIVE → don't touch
+      const edge = hlsRef.current.liveSyncPosition
+        ?? (video.seekable.length ? video.seekable.end(video.seekable.length - 1) : 0);
+      if (!edge) return;
+      const cfg: ReplayWindowConfig = {
+        ...DEFAULT_REPLAY_WINDOW,
+        preRollSec: (msg.preRollMs ?? 5000) / 1000,
+        slowMotionRate: msg.slowMotionRate ?? 0.5,
+        transportGuardSec: (msg.transportGuardMs ?? 350) / 1000,
+      };
+      const plan = planReplay(edge, cfg); // media timeline starts at ~0 → edge ≈ available
+      if (!plan.ok) return;
+      dvrReplayRef.current = { phase: "normal", clipStart: plan.clipStart, clipEnd: plan.clipEnd, cfg };
+      setDvrReplayActive(true);
+      video.playbackRate = 1;
+      video.currentTime = plan.clipStart;
+      video.play().catch(() => {});
+    };
+    window.addEventListener("fifayiti:instant-replay", onInstantReplay);
+    return () => window.removeEventListener("fifayiti:instant-replay", onInstantReplay);
+  }, []);
+
+  // Step the DVR replay sequence from the shared timeupdate handler.
+  const stepDvrReplay = useCallback(() => {
+    const run = dvrReplayRef.current;
+    const video = videoRef.current;
+    if (!run || !video) return;
+    if (video.currentTime >= run.clipEnd - 0.05) {
+      if (run.phase === "normal") {
+        run.phase = "slowmo";
+        video.playbackRate = run.cfg.slowMotionRate; // true 0.5×
+        video.currentTime = run.clipStart;           // same exact window
+        video.play().catch(() => {});
+      } else {
+        // finished → live edge (auto-return)
+        dvrReplayRef.current = null;
+        setDvrReplayActive(false);
+        video.playbackRate = 1;
+        const edge = hlsRef.current?.liveSyncPosition;
+        if (edge != null) video.currentTime = edge;
+        video.play().catch(() => {});
+      }
+    }
+  }, []);
 
   // Video 'ended' → replay clip finished → return to LIVE automatically.
   useEffect(() => {
@@ -338,7 +402,7 @@ export function BroadcastPlayer({ src, replay, children }: BroadcastPlayerProps)
   // ── Derived state ─────────────────────────────────────────────────
   const latency = liveEdge > 0 ? Math.max(0, liveEdge - currentTime) : 0;
   const isLive = latency < 6;
-  const inReplay = activeReplayUrl != null;
+  const inReplay = activeReplayUrl != null || dvrReplayActive;
   const dur = Math.max(0.001, liveEdge - seekStart);
   const playedPct = Math.min(100, ((currentTime - seekStart) / dur) * 100);
   const bufferedPct = Math.min(100, ((bufferedEnd - seekStart) / dur) * 100);
@@ -383,7 +447,12 @@ export function BroadcastPlayer({ src, replay, children }: BroadcastPlayerProps)
         <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#116B3A] shadow-lg">
           <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
           <span className="eyebrow text-white">INSTANT REPLAY</span>
-          <span className="eyebrow text-white/60">{activeReplayUrl?.includes("gol") ? "⚽ GOL" : ""}</span>
+          {dvrReplayActive && (
+            <span className="eyebrow text-white/70 tnum">
+              {(dvrReplayRef.current?.phase === "slowmo") ? "0.5×" : "1×"}
+            </span>
+          )}
+          {activeReplayUrl?.includes("gol") && <span className="eyebrow text-white/60">⚽ GOL</span>}
         </div>
       )}
 

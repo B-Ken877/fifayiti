@@ -1,12 +1,11 @@
 // GET /api/replays?matchId=...
 //
-// Lists archived instant replays (metadata only — each record points at
-// its standalone HLS clip under /replays/<id>/replay.m3u8).
-// Powers the match's Replay section later:
-//   Match
-//    ├── ⚽ Goal 12'
-//    ├── ⚽ Goal 37'
-//    └── ...
+// Lists instant-replay records (Prisma-backed; created live when the
+// operator confirms a replay-eligible event). Each record carries the
+// DVR timeline coordinates (triggeredAt + preRoll + slowMoRate) so a
+// standalone clip can be materialized from the egress recording once
+// object storage is configured — until then the broadcast replay itself
+// is delivered live over the LiveKit data channel.
 
 import { NextRequest, NextResponse } from "next/server";
 import { listReplays } from "@/lib/streaming/replay-engine";

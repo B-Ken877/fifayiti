@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, RemoteTrack, RemoteParticipant, Track } from "livekit-client";
-import { Radio, Calendar, MapPin, Users } from "lucide-react";
+import { Radio, Calendar, MapPin, Users, Maximize } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScoreBug } from "@/components/fifayiti/scorebug";
 import { BroadcastPlayer } from "@/components/fifayiti/tv/broadcast-player";
 import { BroadcastOverlay, type OverlayEvent } from "@/components/fifayiti/tv/broadcast-overlay";
 import { LIVEKIT_WS_URL as WS_URL } from "@/lib/streaming/livekit-config";
+import { ClientReplayEngine, type ReplayEngineState } from "@/lib/replay/client-replay-engine";
 
 const ROOM_NAME = "fifayiti-broadcast";
 
@@ -56,6 +57,32 @@ export function TvPage() {
   const selectedSlotRef = useRef<number | null>(null);
   useEffect(() => { selectedSlotRef.current = selectedSlot; }, [selectedSlot]);
 
+  // ── Instant Replay engine (goal replay) ───────────────────────────
+  // Records the PROGRAM FEED (operator-selected camera) into a rolling
+  // buffer; a LiveKit data message from the server (operator confirmed
+  // GOL) plays 5s @1× → same clip @0.5× → back to LIVE automatically.
+  const replayEngineRef = useRef<ClientReplayEngine | null>(null);
+  const replayVideoRef = useRef<HTMLVideoElement>(null);
+  const [replayState, setReplayState] = useState<ReplayEngineState | null>(null);
+  const hlsSrcRef = useRef<string | null>(null);
+  useEffect(() => { hlsSrcRef.current = hlsSrc; }, [hlsSrc]);
+
+  useEffect(() => {
+    const eng = new ClientReplayEngine({ onState: setReplayState });
+    replayEngineRef.current = eng;
+    (window as any).__fifayitiReplayEngine = eng; // test/debug hook
+    return () => {
+      eng.destroy();
+      replayEngineRef.current = null;
+      delete (window as any).__fifayitiReplayEngine;
+    };
+  }, []);
+  // Keep element refs fresh across branch switches (HLS ↔ WebRTC).
+  useEffect(() => {
+    replayEngineRef.current?.attachReplayVideo(replayVideoRef.current);
+    replayEngineRef.current?.attachLiveVideo(videoRef.current);
+  });
+
   useEffect(() => {
     (async () => {
       try {
@@ -97,6 +124,7 @@ export function TvPage() {
     const unsubAllVideo = () => {
       const room = roomRef.current;
       if (!room) return;
+      replayEngineRef.current?.setSource(null); // HLS carries video now
       for (const p of room.remoteParticipants.values()) {
         for (const pub of p.trackPublications.values()) {
           if (pub.kind === Track.Kind.Video && pub.isSubscribed) {
@@ -166,9 +194,24 @@ export function TvPage() {
         room.on(RoomEvent.Connected, () => { if (!cancelled) { setConnected(true); room.localParticipant.setMetadata(JSON.stringify({ role: "viewer" })); }});
         room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => { if (cancelled || track.kind !== Track.Kind.Video) return; try { const meta = JSON.parse(participant.metadata || "{}"); if (meta.slot && meta.slot === selectedSlotRef.current) attachTrack(track); } catch {} });
         room.on(RoomEvent.ParticipantMetadataChanged, (_id, metadata, participant) => { if (!metadata) return; try { const meta = JSON.parse(metadata); if (meta.slot && meta.role === "cameraman") scanForSelected(); } catch {} });
-        room.on(RoomEvent.TrackUnsubscribed, (track) => { if (currentTrackRef.current === track) { currentTrackRef.current = null; setHasVideo(false); scanForSelected(); } });
+        room.on(RoomEvent.TrackUnsubscribed, (track) => { if (currentTrackRef.current === track) { currentTrackRef.current = null; setHasVideo(false); replayEngineRef.current?.setSource(null); scanForSelected(); } });
         room.on(RoomEvent.ParticipantConnected, () => updateViewerCount());
         room.on(RoomEvent.ParticipantDisconnected, () => updateViewerCount());
+        // Instant replay broadcasts from the server (operator confirmed
+        // GOL etc). WebRTC path → client rolling-buffer engine; HLS path
+        // → seek-based replay inside BroadcastPlayer (DVR viewers who
+        // rewound are never interrupted — it checks live-edge itself).
+        room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
+          try {
+            const msg = JSON.parse(new TextDecoder().decode(payload));
+            if (msg?.type !== "instant-replay") return;
+            if (hlsSrcRef.current) {
+              window.dispatchEvent(new CustomEvent("fifayiti:instant-replay", { detail: msg }));
+            } else {
+              replayEngineRef.current?.trigger(msg);
+            }
+          } catch {}
+        });
         await room.connect(wsUrl, token);
         scanForSelected();
         updateViewerCount();
@@ -188,6 +231,7 @@ export function TvPage() {
       }
       currentTrackRef.current = null;
       setHasVideo(false);
+      replayEngineRef.current?.setSource(null); // broadcast off → stop buffering
       // Broadcast off → stop downloading ANY camera video
       const room = roomRef.current;
       if (room) {
@@ -208,6 +252,10 @@ export function TvPage() {
     if (currentTrackRef.current && videoRef.current) currentTrackRef.current.detach(videoRef.current);
     currentTrackRef.current = track;
     if (videoRef.current) { track.attach(videoRef.current); setHasVideo(true); }
+    // Feed the replay engine's rolling buffer — the program feed IS the
+    // operator-selected camera (switches restart the recorder seamlessly,
+    // preserving the true broadcast timeline).
+    try { replayEngineRef.current?.setSource((track as any).mediaStreamTrack ?? null); } catch {}
   };
 
   // Attach ONLY the operator-selected camera's video (polls room metadata).
@@ -256,6 +304,10 @@ export function TvPage() {
   const fmtMD = (iso: string) => { try { const d = new Date(iso); return d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }) + " · " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
   const sortedEvents = [...events].sort((a, b) => (a.half - b.half) || (a.minute - b.minute));
 
+  // ── Instant replay derived UI state ──
+  const replayPhase = replayState?.phase ?? "idle";
+  const replaying = replayPhase === "arming" || replayPhase === "normal" || replayPhase === "slowmo";
+
   return (
     <div className="bg-[#064E2A] min-h-screen">
       {/* ═══ VIDEO ═══ */}
@@ -298,6 +350,29 @@ export function TvPage() {
             className="w-full h-full object-cover"
             style={{ display: hasVideo ? "block" : "none" }}
           />
+          {/* Instant-replay <video> — plays the sealed clip from the rolling
+              buffer (5s @1× then the same clip @0.5×). The LIVE element stays
+              attached and running underneath (visibility:hidden) so the swap
+              back to live is instantaneous. */}
+          <video
+            ref={replayVideoRef}
+            muted
+            playsInline
+            className="absolute inset-0 w-full h-full object-cover bg-black z-[5]"
+            style={{ display: replayPhase === "normal" || replayPhase === "slowmo" || replayPhase === "arming" ? "block" : "none" }}
+            onTimeUpdate={() => replayEngineRef.current?.onTime()}
+            onEnded={() => replayEngineRef.current?.onEnded()}
+          />
+          {replaying && (
+            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#116B3A] shadow-lg">
+              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              <span className="text-[10px] font-extrabold text-white uppercase tracking-widest">Replay</span>
+              {replayState?.kind === "GOL" && <span className="text-[10px] font-bold text-white/80">⚽</span>}
+              <span className="text-[10px] font-bold text-white/70 tnum">
+                {replayPhase === "slowmo" ? "0.5×" : "1×"}
+              </span>
+            </div>
+          )}
           {!hasVideo && !hlsSrc && (
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <Radio size={28} className="text-[#F4C400] mb-2" />

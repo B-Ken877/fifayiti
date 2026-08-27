@@ -284,6 +284,14 @@ enum MatchEventKind {
 }
 
 // ───────── Replays ─────────
+//
+// Instant-replay records. One row is created the moment the operator
+// confirms a replay-eligible event (GOL today; cards/saves tomorrow).
+// The LIVE broadcast replay is delivered to viewers instantly over the
+// LiveKit data channel (client-side rolling buffer); this row is the
+// durable archive record with the exact DVR timeline coordinates so a
+// standalone clip can be materialized later from the broadcast recording
+// (HLS egress session + PDT window) once object storage is configured.
 
 model Replay {
   id         String      @id @default(cuid())
@@ -297,8 +305,17 @@ model Replay {
   kind       ReplayKind
   minute     Int
   savedAt    DateTime    @default(now())
-  thumbnail  String
+  thumbnail  String      @default("")
   permanent  Boolean     @default(true)
+
+  // ── Instant-replay engine fields (v1) ──
+  eventId     String?   // the MatchEvent that triggered this replay
+  status      String    @default("PUBLISHED") // PUBLISHED | ARCHIVED | FAILED
+  triggeredAt DateTime  @default(now())       // operator marker wall-time (server clock)
+  preRollMs   Int       @default(5000)        // clip = [trigger-preRoll, trigger]
+  slowMotionRate Float  @default(0.5)         // second pass playback rate
+  sequenceMs  Int?      // estimated total wall duration (normal + slow passes)
+  mediaRef    String?   // future: resolved clip URL (S3/DVR) once storage is wired
 }
 
 enum ReplayKind {
