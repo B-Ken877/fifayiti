@@ -8,6 +8,7 @@ import { BroadcastPlayer } from "@/components/fifayiti/tv/broadcast-player";
 import { BroadcastOverlay, type OverlayEvent } from "@/components/fifayiti/tv/broadcast-overlay";
 import { LIVEKIT_WS_URL as WS_URL } from "@/lib/streaming/livekit-config";
 import { ClientReplayEngine, type ReplayEngineState } from "@/lib/replay/client-replay-engine";
+import { WebrtcDvrBar } from "@/components/fifayiti/tv/webrtc-dvr-bar";
 
 const ROOM_NAME = "fifayiti-broadcast";
 
@@ -370,7 +371,7 @@ export function TvPage() {
             muted
             playsInline
             className="absolute inset-0 w-full h-full object-cover bg-black z-[5]"
-            style={{ display: replayPhase === "normal" || replayPhase === "slowmo" || replayPhase === "arming" ? "block" : "none" }}
+            style={{ display: replayPhase === "normal" || replayPhase === "slowmo" || replayPhase === "arming" || replayState?.dvr?.mode === "dvr" ? "block" : "none" }}
             onTimeUpdate={() => replayEngineRef.current?.onTime()}
             onEnded={() => replayEngineRef.current?.onEnded()}
           />
@@ -412,7 +413,35 @@ export function TvPage() {
               )}
               <div className="absolute top-2 right-2 md:top-3 md:right-3 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#D92D20] shadow-md"><span className="w-1 h-1 rounded-full bg-white animate-pulse" /><span className="text-[8px] md:text-[9px] font-extrabold text-white uppercase tracking-wider">Live</span></div>
               {goalFlash && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10"><div className="px-3 py-1 rounded bg-[#F4C400] animate-pulse"><span className="text-xs font-extrabold text-[#064E2A]">⚽ Goal!</span></div></div>}
-              <div className="absolute bottom-2 right-2 z-10 flex items-center gap-1"><div className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-black/70"><span className="text-[8px] text-white/50">Views</span><span className="text-[8px] font-bold text-white tnum">{viewerCount}</span></div><button onClick={toggleFullscreen} className="flex items-center justify-center w-5 h-5 rounded bg-black/70 hover:bg-black/90"><Maximize size={10} className="text-white" /></button></div>
+              {/* DVR-lite control bar (WebRTC path) — pause / ±10s /
+                  draggable timeline over the rolling buffer / RETOUNEN LIVE.
+                  Same visual language as the HLS BroadcastPlayer. Hidden
+                  during operator instant replays (that sequence owns the
+                  replay <video>). */}
+              {!replaying && (
+                <WebrtcDvrBar
+                  mode={replayState?.dvr?.mode ?? "live"}
+                  behindSec={replayState?.dvr?.behindSec ?? 0}
+                  windowSec={replayState?.dvr?.windowSec ?? 0}
+                  clipPaused={replayState?.dvr?.clipPaused ?? false}
+                  viewerCount={viewerCount}
+                  isFullscreen={isFullscreen}
+                  onTogglePlay={() => {
+                    const eng = replayEngineRef.current;
+                    if (!eng) return;
+                    const m = replayState?.dvr?.mode ?? "live";
+                    const cp = replayState?.dvr?.clipPaused ?? false;
+                    // Frozen (paused-at-live or paused DVR clip) → resume;
+                    // anything else playing → pause.
+                    if (m === "live" || (m === "dvr" && !cp)) eng.dvrPause();
+                    else eng.dvrPlay();
+                  }}
+                  onJump={(d) => replayEngineRef.current?.dvrJump(d)}
+                  onScrub={(sec) => replayEngineRef.current?.dvrScrubTo(sec)}
+                  onReturnLive={() => replayEngineRef.current?.dvrReturnLive()}
+                  onToggleFullscreen={toggleFullscreen}
+                />
+              )}
             </>
           )}
           </>
