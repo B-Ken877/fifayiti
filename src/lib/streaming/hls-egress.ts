@@ -18,9 +18,7 @@ import { readFile, writeFile, mkdir, chmod } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 
-const API_KEY = "medikakey";
-const API_SECRET = "7GD6FdL2cP9KTmTLkJVUKNj7XfJjWAMS";
-const LIVEKIT_URL = "http://127.0.0.1:7880";
+import { LIVEKIT_API_KEY as API_KEY, LIVEKIT_API_SECRET as API_SECRET, LIVEKIT_URL } from "./livekit-config";
 const ROOM_NAME = "fifayiti-broadcast";
 
 // Local disk layout: /var/www/fifayiti/hls/<startedAt-ms>/index.m3u8

@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AccessToken } from "livekit-server-sdk";
 import crypto from "crypto";
-
-const API_KEY = "medikakey";
-const API_SECRET = "7GD6FdL2cP9KTmTLkJVUKNj7XfJjWAMS";
+import { LIVEKIT_API_KEY as API_KEY, LIVEKIT_API_SECRET as API_SECRET, LIVEKIT_WS_URL } from "@/lib/streaming/livekit-config";
 
 // TURN server public coordinates (medika-coturn docker container, see
 // /opt/turn/docker-compose.yml on the VPS). Port is 3479 — NOT the
@@ -65,7 +63,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       token: jwt,
-      wsUrl: "wss://fifayiti.medikahaiti.site/livekit-ws",
+      wsUrl: LIVEKIT_WS_URL,
       roomName,
       turnServers: [
         { urls: [`stun:${TURN_HOST}:${TURN_PORT}`] },

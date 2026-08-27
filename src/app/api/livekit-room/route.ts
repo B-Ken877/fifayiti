@@ -26,9 +26,7 @@ import path from "path";
  *      the room (with the metadata) instead.
  */
 
-const API_KEY = "medikakey";
-const API_SECRET = "7GD6FdL2cP9KTmTLkJVUKNj7XfJjWAMS";
-const LIVEKIT_URL = "http://127.0.0.1:7880";
+import { LIVEKIT_API_KEY as API_KEY, LIVEKIT_API_SECRET as API_SECRET, LIVEKIT_URL } from "@/lib/streaming/livekit-config";
 
 const roomService = new RoomServiceClient(LIVEKIT_URL, API_KEY, API_SECRET);
 
