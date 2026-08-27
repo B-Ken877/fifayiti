@@ -4,13 +4,12 @@ import { getSessionRole } from "@/lib/auth/session";
 
 import { LIVEKIT_API_KEY as API_KEY, LIVEKIT_API_SECRET as API_SECRET, LIVEKIT_URL } from "@/lib/streaming/livekit-config";
 
-// RTMP endpoint base — must match `ingress.rtmp_base_url` in
-// /root/livekit/livekit.yaml on the VPS.
-// The stream key is the RTMP stream name, so:
-//   Streamlabs "URL"        = rtmp://fifayiti.medikahaiti.site:1935/live
-//   Streamlabs "Stream key" = <streamKey>
+// RTMP ingest base is NOT hardcoded: LiveKit Cloud returns it from the
+// Ingress API (ingress.url — Cloud serves rtmps://<project>.rtp.livekit.cloud/x,
+// i.e. RTMP over TLS).
+//   Streamlabs "URL"        = ingress.url
+//   Streamlabs "Stream key" = ingress.streamKey
 //   full publish URL        = <base>/<streamKey>
-const RTMP_BASE = "rtmp://fifayiti.medikahaiti.site:1935/live";
 
 function slotFromRole(role: string): number | null {
   if (role === "cameraman" || role === "cameraman1") return 1;
@@ -43,9 +42,8 @@ function slotFromRole(role: string): number | null {
  *      with identity `camera-${slot}` and metadata { slot, role } —
  *      the TV page matches cameras by that metadata
  *   4. LiveKit returns the ingress URL + streamKey
- *   5. Streamlabs pushes RTMP to rtmp://fifayiti.medikahaiti.site:1935/live
- *      with the stream key → the medika-ingress container transcodes to
- *      3 simulcast layers (e.g. 1080/540/360) and joins the LiveKit room
+ *   5. Streamlabs pushes RTMP to the URL LiveKit Cloud returned → Cloud's
+ *      managed ingress transcodes to simulcast layers and joins the room
  *      as `camera-${slot}` — the operator's slot selection works exactly
  *      like with the browser camera.
  */
@@ -109,13 +107,20 @@ export async function GET(req: Request) {
 
     const streamKey = ingress.streamKey as string;
 
-    // 3. Normalize the base URL (LiveKit fills it from livekit.yaml, but
-    //    be defensive: strip trailing slashes and an appended stream key).
-    let base = (ingress.url as string) || RTMP_BASE;
-    if (!base.startsWith("rtmp://")) base = RTMP_BASE;
+    // 4. LiveKit Cloud returns rtmps:// (RTMP over TLS); accept both it
+    //    and plain rtmp:// so the check also works against self-hosted.
+    //    If it's missing or malformed, fail loudly instead of pointing the
+    //    cameraman at a dead self-hosted endpoint.
+    let base = (ingress.url as string) || "";
     base = base.replace(/\/+$/, "");
     if (streamKey && base.endsWith("/" + streamKey)) {
       base = base.slice(0, base.length - streamKey.length - 1);
+    }
+    if (!base.startsWith("rtmp://") && !base.startsWith("rtmps://")) {
+      return NextResponse.json(
+        { error: `LiveKit Cloud pa te bay URL RTMP an (jwenn: "${base || "vide"}"). Esaye ankò.` },
+        { status: 502 }
+      );
     }
 
     return NextResponse.json({

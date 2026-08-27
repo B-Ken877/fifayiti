@@ -31,7 +31,7 @@ interface RoomState {
   metadata?: { selectedSlot: number | null; matchData: any };
 }
 
-const WS_URL = "wss://fifayiti.medikahaiti.site/livekit-ws";
+import { LIVEKIT_WS_URL as WS_URL } from "@/lib/streaming/livekit-config";
 const ROOM_NAME = "fifayiti-broadcast";
 
 const fmtDate = (iso: string) => {

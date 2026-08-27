@@ -30,7 +30,10 @@ const PUBLIC_HLS_BASE = "/hls";
 
 // The recording template served by this Next.js app. Egress's headless
 // chrome fetches it (any path suffix works — see the catch-all route).
-const TEMPLATE_BASE_URL = "http://127.0.0.1:4050/egress-template";
+// LIVEKIT CLOUD: must be a PUBLIC https URL — Cloud's egress chrome runs
+// in LiveKit's infrastructure and cannot reach 127.0.0.1 (that address
+// died with the VPS). The canonical production deployment is Vercel.
+const TEMPLATE_BASE_URL = "https://fifayiti.vercel.app/egress-template";
 
 // ~2.5 Mbps @ 720p30 — good quality that fits Haitian mobile networks and
 // keeps disk usage ~1.1 GB/hour.
@@ -100,7 +103,13 @@ async function isHealthyEgress(active: any, folder: string | null): Promise<bool
       : Number(active?.startedAt ?? 0) * 1000;
   if (Date.now() - startedMs < ZOMBIE_AFTER_MS) return true;
   // Older: healthy only if its playlist file exists on disk.
-  if (!folder) return false;
+  // EXCEPTION — LiveKit Cloud: segments go to object storage (S3/GCS
+  // configured in the Cloud dashboard), never to this machine's disk, so
+  // the local-file check would kill a perfectly healthy egress >90s old.
+  // When there is no local HLS disk, trust the API's active status (Cloud
+  // manages handler health itself). Local zombie detection only applies
+  // to the self-hosted disk pipeline.
+  if (!folder || !existsSync(HLS_ROOT)) return true;
   return existsSync(path.join(folder, "index.m3u8"));
 }
 
@@ -144,13 +153,22 @@ export async function ensureHlsEgress(): Promise<HlsState> {
   }
 
   // 2. Start a new one. Unique folder per broadcast session.
+  //    Local-disk prep is best-effort: on serverless (Vercel) the FS is
+  //    read-only and on LiveKit Cloud the segments land in object storage
+  //    — a failed mkdir must not block the egress API call below.
   const folderName = String(Date.now());
   const folder = path.join(HLS_ROOT, folderName);
-  if (!existsSync(folder)) await mkdir(folder, { recursive: true });
-  // The egress container runs as uid 1001 (user "egress") — it must be able
-  // to write segments into the session folder our API (running as root)
-  // created inside /var/www/fifayiti/hls.
-  try { await chmod(folder, 0o777); } catch {}
+  try {
+    if (!existsSync(folder)) await mkdir(folder, { recursive: true });
+    // The self-hosted egress container ran as uid 1001 and needed write
+    // access to the session folder (irrelevant on Cloud — kept harmless).
+    await chmod(folder, 0o777);
+  } catch (e: any) {
+    console.warn(
+      "[hls-egress] local HLS folder unavailable (expected on serverless/Cloud):",
+      e?.message
+    );
+  }
 
   const ec = egressClient();
   const info = await ec.startRoomCompositeEgress(

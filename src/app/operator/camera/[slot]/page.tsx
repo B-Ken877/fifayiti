@@ -246,17 +246,16 @@ export default function CameraPage() {
       room.on(RoomEvent.ParticipantMetadataChanged, () => updateStats());
       room.on(RoomEvent.Connected, () => { setConnected(true); });
 
-      // TURN relay for cameramen behind carrier-grade NAT (Natcom /
-      // Digicel mobile data): pass the time-limited credentials from
-      // /api/livekit-token as the RTCPeerConnection iceServers.
-      await room.connect(wsUrl, token, {
-        rtcConfig: {
-          iceServers:
-            Array.isArray(turnServers) && turnServers.length
-              ? turnServers
-              : [{ urls: "stun:stun.l.google.com:19302" }],
-        },
-      });
+      // ICE servers: when the API supplies custom TURN entries (legacy
+      // self-hosted coturn), pass them. With LiveKit Cloud we get an
+      // EMPTY list — omit rtcConfig so the client uses the ICE/TURN
+      // servers Cloud delivers during signaling (Natcom/Digicel CGNAT
+      // cameramen rely on those).
+      const connectOpts: any = {};
+      if (Array.isArray(turnServers) && turnServers.length > 0) {
+        connectOpts.rtcConfig = { iceServers: turnServers };
+      }
+      await room.connect(wsUrl, token, connectOpts);
       console.log("[camera] room connected");
 
       // 4. Publish tracks

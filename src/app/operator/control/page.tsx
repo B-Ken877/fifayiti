@@ -4,8 +4,8 @@ import { Room, RoomEvent, RemoteTrack, RemoteParticipant, Track, RemoteTrackPubl
 import { BrandMark } from "@/components/fifayiti/brand-mark";
 import { Radio, Wifi, WifiOff, Eye, Send, AlertCircle, ChevronRight, Camera } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LIVEKIT_WS_URL as WS_URL } from "@/lib/streaming/livekit-config";
 
-const WS_URL = "wss://fifayiti.medikahaiti.site/livekit-ws";
 const ROOM_NAME = "fifayiti-broadcast";
 
 interface SlotState { active: boolean; }

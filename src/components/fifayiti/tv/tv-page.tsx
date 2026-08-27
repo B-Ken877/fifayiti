@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils";
 import { ScoreBug } from "@/components/fifayiti/scorebug";
 import { BroadcastPlayer } from "@/components/fifayiti/tv/broadcast-player";
 import { BroadcastOverlay, type OverlayEvent } from "@/components/fifayiti/tv/broadcast-overlay";
+import { LIVEKIT_WS_URL as WS_URL } from "@/lib/streaming/livekit-config";
 
-const WS_URL = "wss://fifayiti.medikahaiti.site/livekit-ws";
 const ROOM_NAME = "fifayiti-broadcast";
 
 interface MatchData { homeShort: string; homeColor: string; awayShort: string; awayColor: string; homeScore: number; awayScore: number; clock: number; half: string; }

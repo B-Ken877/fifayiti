@@ -4,10 +4,9 @@ import { getSessionRole } from "@/lib/auth/session";
 
 import { LIVEKIT_API_KEY as API_KEY, LIVEKIT_API_SECRET as API_SECRET, LIVEKIT_URL } from "@/lib/streaming/livekit-config";
 
-// WHIP endpoint base — must match `ingress.whip_base_url` in
-// /root/livekit/livekit.yaml. The stream key is appended as a path
+// WHIP ingest base is NOT hardcoded: LiveKit Cloud returns it from the
+// Ingress API (ingress.url). The stream key is appended as a path
 // segment: <base>/<streamKey>
-const WHIP_BASE = "https://fifayiti.medikahaiti.site/livekit-whip";
 
 function slotFromRole(role: string): number | null {
   if (role === "cameraman" || role === "cameraman1") return 1;
@@ -21,8 +20,8 @@ function slotFromRole(role: string): number | null {
  *
  * Returns a WHIP URL + stream key that a cameraman pastes into OBS
  * Studio (Settings → Stream → Service: WHIP) to publish over WebRTC
- * through the medika-ingress container, which transcodes to simulcast
- * layers and joins the LiveKit room as `camera-${slot}`.
+ * through LiveKit Cloud's managed ingress, which transcodes to simulcast
+ * layers and joins the room as `camera-${slot}`.
  *
  * Auth: the signed `fifayiti-session` cookie set by /api/auth/login.
  * Only cameraman* accounts can mint a WHIP token.
@@ -31,9 +30,9 @@ function slotFromRole(role: string): number | null {
  *   { whipUrl, token, roomName, slot, identity }
  *
  * OBS configuration (verified against the live deployment):
- *   Server       = https://fifayiti.medikahaiti.site/livekit-whip/<streamKey>
+ *   Server       = <ingress.url>/<streamKey>   (returned below)
  *   Bearer Token = <streamKey>
- *   (nginx proxies /livekit-whip → 127.0.0.1:8180/whip on the VPS)
+ *   (LiveKit Cloud terminates WHIP at its edge — no nginx/proxy to run)
  */
 export async function GET(req: Request) {
   try {
@@ -96,14 +95,20 @@ export async function GET(req: Request) {
 
     const streamKey = ingress.streamKey as string;
 
-    // 3. Build the public WHIP URL: <base>/<streamKey>
-    //    (the livekit-ingress service resolves the stream key from the
-    //    final URL path segment — verified on the live deployment)
-    let base = (ingress.url as string) || WHIP_BASE;
-    if (!base.startsWith("https://")) base = WHIP_BASE;
+    // 3. Build the public WHIP URL: <base>/<streamKey> — the base comes
+    //    straight from LiveKit Cloud's Ingress API (no local fallback;
+    //    if it's missing, fail loudly instead of pointing at a dead
+    //    self-hosted endpoint).
+    let base = (ingress.url as string) || "";
     base = base.replace(/\/+$/, "");
     if (streamKey && base.endsWith("/" + streamKey)) {
       base = base.slice(0, base.length - streamKey.length - 1);
+    }
+    if (!base.startsWith("https://")) {
+      return NextResponse.json(
+        { error: `LiveKit Cloud pa te bay URL WHIP an (jwenn: "${base || "vide"}"). Esaye ankò.` },
+        { status: 502 }
+      );
     }
     const publicUrl = base + "/" + streamKey;
 
