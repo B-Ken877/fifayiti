@@ -122,7 +122,13 @@ export async function POST(
     // appear on viewers' screens — works on Vercel AND the sandbox
     // (no local filesystem involved). Overlay lives IN the metadata so
     // the read-only serverless FS can no longer swallow it.
-    void pushBroadcastMatchUpdate(id, { overlay: overlayEvent }).catch(() => {});
+    //
+    // AWAIT (not fire-and-forget): on Vercel serverless, the lambda is
+    // frozen the moment the response is returned. A `void` push would be
+    // killed before the LiveKit API call completes, so the TV would never
+    // see the new score/overlay. Awaiting adds ~200ms to the response but
+    // guarantees the metadata reaches LiveKit Cloud.
+    await pushBroadcastMatchUpdate(id, { overlay: overlayEvent }).catch(() => {});
 
     // Best-effort local file copy (sandbox/standalone only — Vercel's FS
     // is read-only and silently skips this; the room metadata above is
@@ -168,9 +174,12 @@ export async function POST(
       console.warn("[events] audit log failed:", e?.message);
     }
 
-    // Instant replay for eligible kinds
+    // Instant replay for eligible kinds.
+    // AWAIT (not fire-and-forget): the replay sends a LiveKit data-channel
+    // message to every viewer — that network call must complete before the
+    // lambda freezes, else no viewer sees the replay.
     if (REPLAY_KINDS.includes(body.kind)) {
-      void triggerBroadcastReplay({
+      await triggerBroadcastReplay({
         kind: body.kind,
         matchId: id,
         eventId: event.id,

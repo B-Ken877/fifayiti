@@ -78,8 +78,15 @@ export async function POST(
     // source). The payload carries clockEpoch + running so GET
     // /api/livekit-room can interpolate a continuously-advancing clock
     // between the operator tab's 5s tick syncs — no server filesystem
-    // needed (works on Vercel). Fire-and-forget: never blocks the tick.
-    void pushBroadcastMatchUpdate(id).catch(() => {});
+    // needed (works on Vercel).
+    //
+    // AWAIT (not fire-and-forget): on Vercel serverless, the lambda is
+    // frozen the moment the response is returned. A `void` push would be
+    // killed before the LiveKit API call completes, so the TV clock would
+    // never advance. Awaiting adds ~200ms but guarantees the metadata
+    // reaches LiveKit Cloud. The operator tab sends ticks every 1s, so
+    // 200ms of latency is well within the tick window.
+    await pushBroadcastMatchUpdate(id).catch(() => {});
 
     return NextResponse.json({ match: updated });
   } catch (e: any) {
