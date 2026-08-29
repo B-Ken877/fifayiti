@@ -80,13 +80,38 @@ export async function POST(
     // between the operator tab's 5s tick syncs — no server filesystem
     // needed (works on Vercel).
     //
-    // AWAIT (not fire-and-forget): on Vercel serverless, the lambda is
-    // frozen the moment the response is returned. A `void` push would be
-    // killed before the LiveKit API call completes, so the TV clock would
-    // never advance. Awaiting adds ~200ms but guarantees the metadata
-    // reaches LiveKit Cloud. The operator tab sends ticks every 1s, so
-    // 200ms of latency is well within the tick window.
-    await pushBroadcastMatchUpdate(id).catch(() => {});
+    // AWAIT + DELTA (not fire-and-forget, not DB read): on Vercel each
+    // lambda gets a fresh DB copy. If we read the clock from the DB, every
+    // tick would start from the stale committed value (e.g. 1020s) and
+    // the TV clock would never advance past 1021. Instead we pass a
+    // clockDelta — the push function reads the CURRENT clock from LiveKit
+    // metadata (shared across all lambdas) and adds 1. The clock advances
+    // monotonically regardless of which lambda handles the tick.
+    const pushOpts: any = {};
+    switch (action) {
+      case "start":
+        pushOpts.forceClock = 0;
+        pushOpts.forceHalf = "1";
+        pushOpts.forceStatus = "AN_DIRÈK";
+        break;
+      case "half_time":
+        pushOpts.forceClock = HALF_LENGTH_SECONDS;
+        pushOpts.forceHalf = "HT";
+        break;
+      case "second_half":
+        pushOpts.forceClock = 0;
+        pushOpts.forceHalf = "2";
+        pushOpts.forceStatus = "AN_DIRÈK";
+        break;
+      case "end":
+        pushOpts.forceHalf = "POST";
+        pushOpts.forceStatus = "FINI";
+        break;
+      case "tick":
+        pushOpts.clockDelta = 1;
+        break;
+    }
+    await pushBroadcastMatchUpdate(id, pushOpts).catch(() => {});
 
     return NextResponse.json({ match: updated });
   } catch (e: any) {

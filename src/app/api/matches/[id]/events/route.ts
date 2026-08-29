@@ -128,7 +128,44 @@ export async function POST(
     // killed before the LiveKit API call completes, so the TV would never
     // see the new score/overlay. Awaiting adds ~200ms to the response but
     // guarantees the metadata reaches LiveKit Cloud.
-    await pushBroadcastMatchUpdate(id, { overlay: overlayEvent }).catch(() => {});
+    //
+    // SCORE DELTA (not DB read): on Vercel each lambda gets a fresh DB
+    // copy. If we read the score from the DB, a clock tick on a different
+    // lambda (which starts with the stale committed DB score=0) would
+    // OVERWRITE this GOL. Instead we pass a scoreDelta — the push function
+    // reads the CURRENT score from LiveKit metadata (shared across all
+    // lambdas) and adds the delta. The GOL is never lost.
+    const scoreDelta =
+      body.kind === "GOL" && body.teamId === match.homeTeamId
+        ? { home: 1, away: 0 }
+        : body.kind === "GOL" && body.teamId === match.awayTeamId
+        ? { home: 0, away: 1 }
+        : undefined;
+
+    // Phase-changing events also force-set the clock/half/status in the
+    // LiveKit metadata (not just the DB — the DB is ephemeral on Vercel).
+    const phaseOpts: any = {};
+    if (body.kind === "KOMANSE") {
+      phaseOpts.forceClock = 0;
+      phaseOpts.forceHalf = "1";
+      phaseOpts.forceStatus = "AN_DIRÈK";
+    } else if (body.kind === "MWATYE_TAN") {
+      phaseOpts.forceClock = HALF_LENGTH_SECONDS;
+      phaseOpts.forceHalf = "HT";
+    } else if (body.kind === "DEZYEM_MITAN") {
+      phaseOpts.forceClock = 0;
+      phaseOpts.forceHalf = "2";
+      phaseOpts.forceStatus = "AN_DIRÈK";
+    } else if (body.kind === "FEN_MATCH") {
+      phaseOpts.forceHalf = "POST";
+      phaseOpts.forceStatus = "FINI";
+    }
+
+    await pushBroadcastMatchUpdate(id, {
+      overlay: overlayEvent,
+      scoreDelta,
+      ...phaseOpts,
+    }).catch(() => {});
 
     // Best-effort local file copy (sandbox/standalone only — Vercel's FS
     // is read-only and silently skips this; the room metadata above is

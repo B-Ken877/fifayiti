@@ -108,12 +108,38 @@ function isRoomMissingError(e: any): boolean {
 export interface PushOptions {
   /** broadcast overlay event (GÒL / kat jòn …) to attach for ~10s */
   overlay?: any;
+  /** Score delta to apply to the CURRENT LiveKit metadata (not DB).
+   *  e.g. { home: 1, away: 0 } for a home GOL. */
+  scoreDelta?: { home: number; away: number };
+  /** Clock delta (seconds) to apply to the CURRENT LiveKit metadata. */
+  clockDelta?: number;
+  /** Force-set the clock (overrides delta). Used by start/half_time/second_half. */
+  forceClock?: number;
+  /** Force-set the half (overrides delta). */
+  forceHalf?: string;
+  /** Force-set the match status. */
+  forceStatus?: string;
 }
 
 /**
- * Merge a fresh matchData (and optional overlay) into the broadcast room
- * metadata. Fire-and-forget safe: never throws to the caller's critical
- * path — returns true when the push reached LiveKit.
+ * Merge a matchData update into the broadcast room metadata.
+ *
+ * ARCHITECTURE (Vercel serverless):
+ *   On Vercel each lambda gets a FRESH copy of prisma/dev.db. Writes in
+ *   one lambda are invisible to the next. If we read score/clock from the
+ *   DB and pushed that, a clock tick on Lambda B (which starts with the
+ *   stale committed DB score=0) would OVERWRITE a GOL that Lambda A just
+ *   pushed (score=1). The TV would never show the updated score.
+ *
+ *   FIX: the LiveKit room metadata is the SOURCE OF TRUTH for the live
+ *   score/clock — it is shared across all lambdas and survives participant
+ *   disconnects. We read the current matchData from LiveKit, apply deltas
+ *   (scoreDelta / clockDelta / force* fields), and push the result back.
+ *   The DB writes still happen (for the events archive) but they are NOT
+ *   read here.
+ *
+ *   Team names/colors ARE read from the DB (they don't change during a
+ *   match, so the ephemeral DB copy is fine for that).
  *
  * Guard: if the room currently shows a DIFFERENT match, we do not
  * overwrite it (an unrelated match's phase tick must not hijack the TV).
@@ -123,9 +149,6 @@ export async function pushBroadcastMatchUpdate(
   opts: PushOptions = {}
 ): Promise<boolean> {
   try {
-    const fresh = await buildMatchDataFromDb(matchId);
-    if (!fresh) return false;
-
     const { roomExists, metadata } = await getRoomMetadata();
     const currentMatchId = metadata?.matchData?.matchId ?? null;
     if (currentMatchId && currentMatchId !== matchId) {
@@ -133,10 +156,67 @@ export async function pushBroadcastMatchUpdate(
       return false;
     }
 
+    // ── Start from the CURRENT LiveKit matchData (NOT the DB) ──
+    // This is the fix for the lambda race condition: the score/clock
+    // live in LiveKit metadata (shared across all lambdas), not in the
+    // ephemeral /tmp DB copy.
+    const current: any = metadata?.matchData ?? {};
+
+    const updated: any = {
+      matchId,
+      homeShort: current.homeShort,
+      homeColor: current.homeColor,
+      awayShort: current.awayShort,
+      awayColor: current.awayColor,
+      homeScore: current.homeScore ?? 0,
+      awayScore: current.awayScore ?? 0,
+      clock: current.clock ?? 0,
+      half: current.half ?? "PRE",
+      status: current.status ?? "PWOGRAM",
+      clockEpoch: Date.now(),
+    };
+
+    // ── Apply score delta ──
+    if (opts.scoreDelta) {
+      updated.homeScore = (current.homeScore ?? 0) + opts.scoreDelta.home;
+      updated.awayScore = (current.awayScore ?? 0) + opts.scoreDelta.away;
+    }
+
+    // ── Apply clock delta ──
+    if (opts.clockDelta) {
+      updated.clock = (current.clock ?? 0) + opts.clockDelta;
+    }
+
+    // ── Apply forced values (override deltas) ──
+    if (opts.forceClock !== undefined) updated.clock = opts.forceClock;
+    if (opts.forceHalf !== undefined) updated.half = opts.forceHalf;
+    if (opts.forceStatus !== undefined) updated.status = opts.forceStatus;
+
+    // ── Running state (drives clock interpolation on the TV) ──
+    updated.running =
+      updated.status === "AN_DIRÈK" &&
+      (updated.half === "1" || updated.half === "2");
+
+    // ── Team info from DB (safe — doesn't change during a match) ──
+    // Only fetch if we don't already have it in the LiveKit metadata.
+    if (!updated.homeShort || !updated.awayShort) {
+      try {
+        const dbData = await buildMatchDataFromDb(matchId);
+        if (dbData) {
+          if (!updated.homeShort) {
+            updated.homeShort = dbData.homeShort;
+            updated.homeColor = dbData.homeColor;
+          }
+          if (!updated.awayShort) {
+            updated.awayShort = dbData.awayShort;
+            updated.awayColor = dbData.awayColor;
+          }
+        }
+      } catch {}
+    }
+
     const merged: any = { ...(metadata ?? {}) };
-    // Preserve the operator's camera selection (or clear it if none was
-    // ever set AND no camera is expected — never touch it here otherwise).
-    merged.matchData = fresh;
+    merged.matchData = updated;
     if (metadata?.selectedSlot !== undefined) merged.selectedSlot = metadata.selectedSlot;
     if (opts.overlay) merged.overlay = opts.overlay;
 

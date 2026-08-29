@@ -192,10 +192,13 @@ export async function GET(req: NextRequest) {
     // against the server's wall clock.
     //
     // RUNAWAY GUARD: interpolation only applies within MAX_DRIFT of the
-    // last anchor. If the operator tab closes (no more 5s tick pushes),
+    // last anchor. If the operator tab closes (no more 3s tick pushes),
     // the clock FREEZES at the last synced value instead of climbing
     // past 30' forever. Ticks resume → fresh anchor → clock resumes.
-    const MAX_INTERPOLATION_MS = 15_000;
+    // 30s window (up from 15s) gives extra tolerance for lambda cold
+    // starts on Vercel — a tick might be delayed by a cold lambda but
+    // the clock keeps advancing smoothly from the last anchor.
+    const MAX_INTERPOLATION_MS = 30_000;
     try {
       const md = metadata?.matchData;
       if (md && typeof md.clockEpoch === "number" && md.running) {

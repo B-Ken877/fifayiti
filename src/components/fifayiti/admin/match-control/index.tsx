@@ -234,7 +234,7 @@ export function MatchControlPage() {
       }
       setMatch({ ...match, clock: newClock });
       const now = Date.now();
-      if (now - lastTickSync.current > 5000) {
+      if (now - lastTickSync.current > 3000) {
         lastTickSync.current = now;
         try {
           await fetch(`/api/matches/${match.id}/phase`, {
