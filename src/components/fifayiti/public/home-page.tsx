@@ -1,14 +1,17 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useAppStore } from "@/store/app-store";
 import { Room, RoomEvent, RemoteTrack, Track } from "livekit-client";
 import {
   Play, Tv, ChevronRight, Calendar, MapPin, Clock,
-  Radio, Star, Users,
+  Radio, Star, Users, Maximize2, Minimize2, RotateCcw, RotateCw, Pause,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScoreBug } from "@/components/fifayiti/scorebug";
 import { BroadcastPlayer } from "@/components/fifayiti/tv/broadcast-player";
+import { BroadcastOverlay, type OverlayEvent } from "@/components/fifayiti/tv/broadcast-overlay";
+import { WebrtcDvrBar } from "@/components/fifayiti/tv/webrtc-dvr-bar";
+import { ClientReplayEngine, type ReplayEngineState } from "@/lib/replay/client-replay-engine";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 interface TeamData {
@@ -129,10 +132,27 @@ export function HomePage() {
   const [replayActive, setReplayActive] = useState<{
     url: string; kind: string; endsAt: number;
   } | null>(null);
+  // Live viewer count (other LiveKit participants with role=viewer).
+  const [viewerCount, setViewerCount] = useState(0);
+  // Fullscreen state — toggled by the DVR bar's fullscreen button.
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  // Client-side replay engine state — drives the YouTube-style DVR bar
+  // (pause / ±10s / scrub / RETOUNEN LIVE) on the WebRTC path.
+  const [replayState, setReplayState] = useState<ReplayEngineState | null>(null);
 
   const roomRef = useRef<Room | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const currentTrackRef = useRef<RemoteTrack | null>(null);
+  // Container of the TV hero — needed for requestFullscreen + DVR bar
+  // auto-hide wake-on-pointermove.
+  const tvContainerRef = useRef<HTMLDivElement>(null);
+  // The replay engine instance + the dedicated <video> element it renders
+  // into. Same wiring pattern as tv-page.tsx — the LIVE <video> keeps
+  // running (hidden) while the replay <video> takes over the screen.
+  const replayEngineRef = useRef<ClientReplayEngine | null>(null);
+  const replayVideoRef = useRef<HTMLVideoElement>(null);
+  const hlsSrcRef = useRef<string | null>(null);
+  useEffect(() => { hlsSrcRef.current = hlsSrc; }, [hlsSrc]);
 
   // ── Live data polling ────────────────────────────────────────────
   // Scores/schedule refresh every 10s so operator work (gòl, kat, fen
@@ -186,11 +206,37 @@ export function HomePage() {
   const selectedSlotRef = useRef<number | null>(null);
   useEffect(() => { selectedSlotRef.current = selectedSlot; }, [selectedSlot]);
 
+  // ── Instant Replay engine (goal replay + client-side DVR) ────────────
+  // Records the PROGRAM FEED (operator-selected camera) into a 60s rolling
+  // buffer; on operator-confirmed GOL it plays 5s @1× → same clip @0.5× →
+  // back to LIVE. Same buffer powers the YouTube-style DVR controls on the
+  // WebRTC path (pause / ±10s / scrub / RETOUNEN LIVE).
+  useEffect(() => {
+    const eng = new ClientReplayEngine({ onState: setReplayState });
+    replayEngineRef.current = eng;
+    (window as any).__fifayitiReplayEngine = eng; // test/debug hook
+    return () => {
+      eng.destroy();
+      replayEngineRef.current = null;
+      delete (window as any).__fifayitiReplayEngine;
+    };
+  }, []);
+  // Keep element refs fresh across branch switches (HLS ↔ WebRTC) and
+  // whenever the live element mounts/unmounts with the broadcast state.
+  useEffect(() => {
+    replayEngineRef.current?.attachReplayVideo(replayVideoRef.current);
+    replayEngineRef.current?.attachLiveVideo(videoRef.current);
+  });
+
   // Attach ONLY the operator-selected camera's video to the hero player
   const attachTrack = (track: RemoteTrack) => {
     if (currentTrackRef.current && videoRef.current) currentTrackRef.current.detach(videoRef.current);
     currentTrackRef.current = track;
     if (videoRef.current) { track.attach(videoRef.current); setHasVideo(true); }
+    // Feed the replay engine's rolling buffer — the program feed IS the
+    // operator-selected camera (switches restart the recorder seamlessly,
+    // preserving the true broadcast timeline).
+    try { replayEngineRef.current?.setSource((track as any).mediaStreamTrack ?? null); } catch {}
   };
   // ── Instant replay polling (broadcast event, not archive) ─────────
   useEffect(() => {
@@ -323,15 +369,45 @@ export function HomePage() {
           if (currentTrackRef.current === track) {
             currentTrackRef.current = null;
             setHasVideo(false);
+            replayEngineRef.current?.setSource(null);
             scanForSelected();
           }
         });
+        room.on(RoomEvent.ParticipantConnected, () => updateViewerCount());
+        room.on(RoomEvent.ParticipantDisconnected, () => updateViewerCount());
+        // Instant replay broadcasts from the server (operator confirmed
+        // GOL etc). On the WebRTC path the client rolling-buffer engine
+        // plays the sealed clip; on the HLS path (rare on Vercel) the
+        // BroadcastPlayer handles it via a window event.
+        room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
+          try {
+            const msg = JSON.parse(new TextDecoder().decode(payload));
+            if (msg?.type !== "instant-replay") return;
+            if (hlsSrcRef.current) {
+              window.dispatchEvent(new CustomEvent("fifayiti:instant-replay", { detail: msg }));
+            } else {
+              replayEngineRef.current?.trigger(msg);
+            }
+          } catch {}
+        });
         await room.connect(wsUrl, token);
+        room.localParticipant.setMetadata(JSON.stringify({ role: "viewer" }));
         scanForSelected();
+        updateViewerCount();
       } catch (e) { console.error("[home] livekit error:", e); }
     })();
     return () => { cancelled = true; if (roomRef.current) roomRef.current.disconnect(); };
   }, [isBroadcasting]);
+
+  const updateViewerCount = () => {
+    const room = roomRef.current;
+    if (!room) return;
+    let v = 0;
+    for (const p of room.remoteParticipants.values()) {
+      try { if (JSON.parse(p.metadata || "{}").role === "viewer") v++; } catch {}
+    }
+    setViewerCount(v);
+  };
 
   // Hot-switch: when the operator changes camera slot, re-attach immediately
   useEffect(() => {
@@ -345,8 +421,35 @@ export function HomePage() {
     if (!isBroadcasting) {
       currentTrackRef.current = null;
       setHasVideo(false);
+      replayEngineRef.current?.setSource(null); // broadcast off → stop buffering
     }
   }, [isBroadcasting]);
+
+  // ── Fullscreen (TV hero only) ────────────────────────────────────────
+  // The DVR bar's fullscreen button calls this. Locks to landscape on
+  // mobile so the 16:9 feed fills the screen.
+  const toggleFullscreen = useCallback(async () => {
+    if (!document.fullscreenElement) {
+      try {
+        await tvContainerRef.current?.requestFullscreen?.();
+        const o = (screen as any).orientation;
+        if (o?.lock) try { await o.lock("landscape"); } catch {}
+        setIsFullscreen(true);
+      } catch {}
+    } else {
+      try {
+        await document.exitFullscreen?.();
+        const o = (screen as any).orientation;
+        if (o?.unlock) try { await o.unlock(); } catch {}
+        setIsFullscreen(false);
+      } catch {}
+    }
+  }, []);
+  useEffect(() => {
+    const f = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", f);
+    return () => document.removeEventListener("fullscreenchange", f);
+  }, []);
 
   useEffect(() => {
     const next = upcoming[0];
@@ -397,8 +500,16 @@ export function HomePage() {
             <h1 className="text-sm lg:text-lg font-extrabold text-white tracking-tight">TV</h1>
           </div>
 
-          {/* TV Stage — cinematic ratio on mobile, 16:9 from md up, yellow border */}
-          <div className="relative aspect-[18/9] md:aspect-video rounded-lg overflow-hidden bg-black" style={{ border: "2px solid #F4C400" }}>
+          {/* TV Stage — cinematic ratio on mobile, 16:9 from md up, yellow border.
+              Carries the DVR bar's fullscreen handler + replay <video>. */}
+          <div
+            ref={tvContainerRef}
+            className={cn(
+              "relative aspect-[18/9] md:aspect-video rounded-lg overflow-hidden bg-black",
+              isFullscreen && "rounded-none aspect-auto h-screen w-screen"
+            )}
+            style={{ border: isFullscreen ? undefined : "2px solid #F4C400" }}
+          >
 
             {/* ── STATE A: LIVE ── */}
             {tvState === "live" && (() => {
@@ -467,9 +578,35 @@ export function HomePage() {
                     autoPlay
                     muted
                     playsInline
-                    className="absolute inset-0 w-full h-full object-cover"
+                    className="w-full h-full object-cover"
                     style={{ display: hasVideo ? "block" : "none" }}
                   />
+                  {/* Instant-replay <video> — plays the sealed clip from the
+                      rolling buffer (5s @1× then the same clip @0.5×). The
+                      LIVE element stays attached and running underneath
+                      (visibility:hidden) so the swap back to live is
+                      instantaneous and the WebRTC track never stalls. */}
+                  <video
+                    ref={replayVideoRef}
+                    muted
+                    playsInline
+                    className="absolute inset-0 w-full h-full object-cover bg-black z-[5]"
+                    style={{ display: replayState?.phase === "normal" || replayState?.phase === "slowmo" || replayState?.phase === "arming" || replayState?.dvr?.mode === "dvr" ? "block" : "none" }}
+                    onTimeUpdate={() => replayEngineRef.current?.onTime()}
+                    onEnded={() => replayEngineRef.current?.onEnded()}
+                  />
+                  {/* REPLAY badge — shows above the player while the engine
+                      plays the sealed clip. Mirrors tv-page.tsx. */}
+                  {(replayState?.phase === "arming" || replayState?.phase === "normal" || replayState?.phase === "slowmo") && (
+                    <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#116B3A] shadow-lg">
+                      <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                      <span className="text-[10px] font-extrabold text-white uppercase tracking-widest">Replay</span>
+                      {replayState?.kind === "GOL" && <span className="text-[10px] font-bold text-white/80">⚽</span>}
+                      <span className="text-[10px] font-bold text-white/70 tnum">
+                        {replayState?.phase === "slowmo" ? "0.5×" : "1×"}
+                      </span>
+                    </div>
+                  )}
                   {!hasVideo && (
                     <div className="absolute inset-0 bg-pitch-texture-dark flex items-center justify-center">
                       <div className="text-center">
@@ -479,6 +616,10 @@ export function HomePage() {
                       </div>
                     </div>
                   )}
+                  {/* Broadcast overlay (GOL/Fot/Kat Jòn/etc animated
+                      overlays for viewers). Rendered only on the WebRTC
+                      path — the HLS BroadcastPlayer carries its own. */}
+                  <BroadcastOverlay event={overlayEvent} />
                   {/* AN DIRÈK badge — TOP-RIGHT (broadcast convention; the
                       scorebug owns the top-left corner). Scaled down to match
                       the compact scorebug so the match view stays clear. */}
@@ -499,6 +640,35 @@ export function HomePage() {
                         minute={bug.minute}
                       />
                     </div>
+                  )}
+                  {/* YouTube-style DVR control bar (WebRTC path) — pause /
+                      ±10s / draggable timeline over the rolling buffer /
+                      RETOUNEN LIVE / fullscreen. Same visual language as
+                      the HLS BroadcastPlayer. Hidden during operator instant
+                      replays (that sequence owns the replay <video>). */}
+                  {hasVideo && !(replayState?.phase === "arming" || replayState?.phase === "normal" || replayState?.phase === "slowmo") && (
+                    <WebrtcDvrBar
+                      mode={replayState?.dvr?.mode ?? "live"}
+                      behindSec={replayState?.dvr?.behindSec ?? 0}
+                      windowSec={replayState?.dvr?.windowSec ?? 0}
+                      clipPaused={replayState?.dvr?.clipPaused ?? false}
+                      viewerCount={viewerCount}
+                      isFullscreen={isFullscreen}
+                      onTogglePlay={() => {
+                        const eng = replayEngineRef.current;
+                        if (!eng) return;
+                        const m = replayState?.dvr?.mode ?? "live";
+                        const cp = replayState?.dvr?.clipPaused ?? false;
+                        // Frozen (paused-at-live or paused DVR clip) → resume;
+                        // anything else playing → pause.
+                        if (m === "live" || (m === "dvr" && !cp)) eng.dvrPause();
+                        else eng.dvrPlay();
+                      }}
+                      onJump={(d) => replayEngineRef.current?.dvrJump(d)}
+                      onScrub={(sec) => replayEngineRef.current?.dvrScrubTo(sec)}
+                      onReturnLive={() => replayEngineRef.current?.dvrReturnLive()}
+                      onToggleFullscreen={toggleFullscreen}
+                    />
                   )}
                   </>
                   )}
