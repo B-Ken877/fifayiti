@@ -522,15 +522,24 @@ export class ClientReplayEngine {
       this._dvrStallSince = 0;
     } else if (!v.paused) {
       if (!this._dvrStallSince) this._dvrStallSince = Date.now();
-      else if (Date.now() - this._dvrStallSince > 1500) stalled = true;
+      // 3s grace: the decoder may need time to find the first keyframe
+      // in the blob before it can start rendering frames. 1.5s was too
+      // aggressive and killed clips that were still loading.
+      else if (Date.now() - this._dvrStallSince > 3000) stalled = true;
     }
 
     // Span guard (primary): the clip's REAL content length is known from
     // the chunk wall-clocks — Chrome reports the webm duration as Infinity
     // and can free-run currentTime past the data, so bound it ourselves.
+    // NOTE: _dvrSpanSec includes the keyframe lookback padding (~3s), so
+    // the clip is exhausted when played time reaches the span minus the
+    // lookback (the padding is before the seek point, not after).
     let spanDone = false;
     if (this._dvrBaseOffset != null && this._dvrSpanSec > 0) {
       const played = v.currentTime - this._dvrBaseOffset;
+      // Allow the full span (lookback + content) before declaring done —
+      // the auto-return on 'caught' (≤1.2s behind live) fires first
+      // in normal operation.
       if (played >= this._dvrSpanSec - 0.6) spanDone = true;
     }
 
@@ -575,18 +584,33 @@ export class ClientReplayEngine {
 
   /** Build + play a clip of the rolling buffer starting at wall-clock
    *  `wallMs`. The clip plays 1× and converges to the live edge, where
-   *  onTime()/onEnded() auto-return to live. */
+   *  onTime()/onEnded() auto-return to live.
+   *
+   *  KEYFRAME LOOKBACK: MediaRecorder produces keyframes only every ~2-3s.
+   *  Slicing the buffer at an arbitrary chunk yields a blob whose first
+   *  frames are P-frames with no reference — the decoder shows one frame
+   *  then stalls. We include KEYFRAME_LOOKBACK extra chunks BEFORE the
+   *  requested position so a keyframe is always available, then seek to
+   *  the true requested position once the blob has loaded. */
   private dvrStartClipAtWall(wallMs: number) {
     if (!this.video || this.chunks.length === 0) return;
-    // Chunks arrive with wall = END of their ~1s of content. Start from
-    // the chunk whose content contains wallMs (allow one chunk of slack
-    // so the clip never starts mid-cluster without a keyframe).
-    let idx = this.chunks.findIndex((c) => c.wall >= wallMs - TIMESLICE_MS);
-    if (idx < 0) idx = 0;
-    const startWall = this.chunks[idx].wall - TIMESLICE_MS; // media pos 0 ≈ this wall ms
+    // Find the chunk at the requested position.
+    let targetIdx = this.chunks.findIndex((c) => c.wall >= wallMs - TIMESLICE_MS);
+    if (targetIdx < 0) targetIdx = 0;
+
+    // Start a few chunks earlier to guarantee a keyframe is included.
+    // MediaRecorder keyframe interval is ~2s at 1s timeslice → 3 chunks
+    // of lookback reliably captures at least one keyframe.
+    const KEYFRAME_LOOKBACK = 3;
+    const startIdx = Math.max(0, targetIdx - KEYFRAME_LOOKBACK);
+    const startWall = this.chunks[startIdx].wall - TIMESLICE_MS; // media pos 0 ≈ this wall ms
+
+    // The seek target inside the blob (recording-relative time offset from
+    // the blob's first frame to the user's requested position).
+    const seekOffsetSec = Math.max(0, (wallMs - startWall) / 1000);
 
     this.releaseUrl();
-    const blob = this.buildBlob(idx);
+    const blob = this.buildBlob(startIdx);
     if (!blob) { this.dvrReturnLive(); return; }
     this._dvrLastPos = -1;
     this._dvrStallSince = 0;
@@ -602,15 +626,30 @@ export class ClientReplayEngine {
       console.warn("[dvr] clip video error:", v.error?.code, v.error?.message);
       this.dvrReturnLive();
     };
-    this._dvrAnchorWall = startWall;
+    // Anchor at the REQUESTED position (not the blob start) so behindSec()
+    // measures from where the user asked to scrub, not from the keyframe
+    // lookback padding.
+    this._dvrAnchorWall = wallMs;
     this._dvrMode = "dvr";
     this.hideLive(true);
     this.startDvrTicker();
     const go = () => {
       v.playbackRate = 1;
+      // Seek past the keyframe lookback to the actual requested position.
+      // The decoder has already found the keyframe during loading, so it
+      // can decode all P-frames from here forward.
+      if (seekOffsetSec > 0.3) {
+        try { v.currentTime = seekOffsetSec; } catch {}
+      }
       v.play().then(() => {
-        // Blob timecodes are absolute — record where the first frame sits
-        // so behindSec() measures from the true clip start.
+        // Blob timecodes are absolute — record where playback actually
+        // landed (after the seek) so behindSec() is accurate.
+        this._dvrBaseOffset = v.currentTime || 0;
+        // Adjust the base offset so that behindSec() computes from the
+        // requested scrub position, not the post-seek currentTime.
+        // behindSec = (now - (anchor + (currentTime - baseOffset)*1000)) / 1000
+        // We want behindSec ≈ (now - wallMs) / 1000 at scrub time.
+        // anchor = wallMs, so baseOffset must equal currentTime.
         this._dvrBaseOffset = v.currentTime || 0;
       }).catch((reason) => {
         console.warn("[dvr] clip playback rejected:", reason?.name, reason?.message);

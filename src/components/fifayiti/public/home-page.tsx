@@ -490,7 +490,7 @@ export function HomePage() {
     <div className="min-h-screen bg-[#064E2A]">
       {/* ═══ FIFAYITI TV — THE HERO ═══ */}
       <section className="bg-pitch-texture-dark">
-        <div className="max-w-[1280px] mx-auto px-4 pt-3 pb-5">
+        <div className="max-w-[1400px] mx-auto px-4 pt-3 pb-5">
 
           {/* FIFAYITI TV identity */}
           <div className="flex items-center gap-2 mb-2.5">
@@ -501,7 +501,10 @@ export function HomePage() {
           </div>
 
           {/* TV Stage — cinematic ratio on mobile, 16:9 from md up, yellow border.
-              Carries the DVR bar's fullscreen handler + replay <video>. */}
+              Carries the DVR bar's fullscreen handler + replay <video>.
+              On desktop (lg+) it sits inside a 2-column grid next to a 340px
+              broadcast info sidebar (see <aside> below). */}
+          <div className="lg:grid lg:grid-cols-[1fr_340px] lg:gap-5">
           <div
             ref={tvContainerRef}
             className={cn(
@@ -808,16 +811,149 @@ export function HomePage() {
               </div>
             )}
           </div>
+
+          {/* ── Desktop broadcast info sidebar (lg+ only) ──
+              Sits in the 340px column next to the TV stage. Renders a
+              different panel depending on tvState: a live score panel
+              with viewer count, an upcoming-match countdown card, or an
+              "off-air" placeholder with the last result. */}
+          <aside className="hidden lg:flex flex-col gap-3 self-start">
+            {tvState === "live" && liveMatch && (() => {
+              const home = teamById(liveMatch.homeTeamId);
+              const away = teamById(liveMatch.awayTeamId);
+              const homeScore = matchData?.homeScore ?? liveMatch.homeScore ?? 0;
+              const awayScore = matchData?.awayScore ?? liveMatch.awayScore ?? 0;
+              const clockSec = matchData?.clock ?? liveMatch.clock ?? 0;
+              const half = matchData?.half ?? liveMatch.half;
+              const minute = Math.floor(clockSec / 60);
+              return (
+                <>
+                  <div className="rounded-lg border border-white/10 bg-[#064E2A]/80 backdrop-blur-sm p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#D92D20] text-[9px] font-extrabold text-white uppercase tracking-wider">
+                        <span className="w-1 h-1 rounded-full bg-white animate-pulse" />
+                        An Dirèk
+                      </span>
+                      <span className="flex items-center gap-1 text-[10px] text-white/60 tnum">
+                        <Users size={11} className="text-[#F4C400]" /> {viewerCount} moun k ap gade
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex flex-col items-center gap-1.5 flex-1 min-w-0">
+                        <TeamCrest team={home} size={36} />
+                        <p className="text-[11px] font-bold text-white text-center truncate w-full">{home?.shortName ?? home?.name ?? "???"}</p>
+                      </div>
+                      <div className="flex flex-col items-center px-2">
+                        <p className="text-4xl font-extrabold text-white tnum leading-none">
+                          {homeScore}<span className="text-white/40 mx-1">-</span>{awayScore}
+                        </p>
+                        <p className="mt-1.5 text-2xl font-extrabold text-[#F4C400] tnum">{minute}'</p>
+                        {half && <p className="mt-0.5 text-[9px] uppercase tracking-wider text-white/50">{half}</p>}
+                      </div>
+                      <div className="flex flex-col items-center gap-1.5 flex-1 min-w-0">
+                        <TeamCrest team={away} size={36} />
+                        <p className="text-[11px] font-bold text-white text-center truncate w-full">{away?.shortName ?? away?.name ?? "???"}</p>
+                      </div>
+                    </div>
+                  </div>
+                  {liveMatch.venue && (
+                    <div className="rounded-lg border border-white/10 bg-black/40 p-3 flex items-start gap-2">
+                      <MapPin size={14} className="text-[#F4C400] shrink-0 mt-0.5" />
+                      <div className="min-w-0">
+                        <p className="text-[9px] uppercase tracking-wider text-white/45 mb-0.5">Lyè match la</p>
+                        <p className="text-xs font-semibold text-white">{liveMatch.venue}</p>
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
+            {tvState === "upcoming" && nextMatch && (() => {
+              const home = teamById(nextMatch.homeTeamId);
+              const away = teamById(nextMatch.awayTeamId);
+              return (
+                <div className="rounded-lg border border-white/10 bg-[#064E2A]/80 backdrop-blur-sm p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/10 text-[9px] font-extrabold text-white uppercase tracking-wider">
+                      Pwochen match
+                    </span>
+                    <span className="text-[10px] text-white/55 tnum flex items-center gap-1">
+                      <Calendar size={11} className="text-[#F4C400]" /> {fmtDate(nextMatch.kickoff)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <div className="flex flex-col items-center gap-1.5 flex-1 min-w-0">
+                      <TeamCrest team={home} size={36} />
+                      <p className="text-[11px] font-bold text-white text-center truncate w-full">{home?.shortName ?? home?.name ?? "???"}</p>
+                    </div>
+                    <span className="text-sm font-black italic text-white/50">VS</span>
+                    <div className="flex flex-col items-center gap-1.5 flex-1 min-w-0">
+                      <TeamCrest team={away} size={36} />
+                      <p className="text-[11px] font-bold text-white text-center truncate w-full">{away?.shortName ?? away?.name ?? "???"}</p>
+                    </div>
+                  </div>
+                  <div className="text-center rounded-md bg-black/30 py-2.5">
+                    <p className="text-[9px] uppercase tracking-[0.15em] text-white/45 mb-0.5">Kòmansman nan</p>
+                    <p className="text-2xl font-extrabold text-[#F4C400] tnum tracking-[0.08em]">{countdown ?? "-- : -- : --"}</p>
+                    <p className="text-[10px] text-white/55 tnum mt-1 flex items-center justify-center gap-1">
+                      <Clock size={10} className="text-[#F4C400]" /> {fmtTime(nextMatch.kickoff)}
+                    </p>
+                  </div>
+                  {nextMatch.venue && (
+                    <div className="mt-3 flex items-start gap-2 pt-3 border-t border-white/10">
+                      <MapPin size={14} className="text-[#F4C400] shrink-0 mt-0.5" />
+                      <div className="min-w-0">
+                        <p className="text-[9px] uppercase tracking-wider text-white/45 mb-0.5">Lyè match la</p>
+                        <p className="text-xs font-semibold text-white">{nextMatch.venue}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {tvState === "empty" && (
+              <div className="rounded-lg border border-white/10 bg-[#064E2A]/80 backdrop-blur-sm p-4 flex flex-col gap-3">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="flex items-center justify-center w-7 h-7 rounded-md bg-white/10">
+                      <Tv size={14} className="text-[#F4C400]" />
+                    </div>
+                    <p className="text-xs font-bold text-white">Pwochen retransmisyon an ap vini</p>
+                  </div>
+                  <p className="text-[10px] text-white/50 leading-relaxed">Ekip yo ap prepare. Tounen pita pou w gade match la an dirèk.</p>
+                </div>
+                {lastMatch && (
+                  <div className="rounded-md bg-black/30 p-3">
+                    <p className="text-[9px] uppercase tracking-wider text-white/45 mb-1.5">Dènye match</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        <TeamCrest team={teamById(lastMatch.homeTeamId)} size={20} />
+                        <span className="text-[11px] font-bold text-white truncate">{teamById(lastMatch.homeTeamId)?.shortName ?? "???"}</span>
+                      </div>
+                      <span className="text-base font-extrabold text-[#F4C400] tnum">{lastMatch.homeScore} - {lastMatch.awayScore}</span>
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1 justify-end">
+                        <span className="text-[11px] font-bold text-white truncate">{teamById(lastMatch.awayTeamId)?.shortName ?? "???"}</span>
+                        <TeamCrest team={teamById(lastMatch.awayTeamId)} size={20} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </aside>
+          </div>
         </div>
       </section>
 
       {/* ═══ 2. MATCH KAP VINI YO (white) ═══ */}
       {upcoming.length > 0 && (
         <section className="bg-white">
-          <div className="max-w-[1280px] mx-auto px-4 py-8">
+          <div className="max-w-[1400px] mx-auto px-4 py-8">
             <h2 className="text-lg font-bold text-[#064E2A] mb-4">Match kap vini yo</h2>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {upcoming.slice(0, 6).map(m => {
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {upcoming.slice(0, 8).map(m => {
                 const home = teamById(m.homeTeamId), away = teamById(m.awayTeamId);
                 return (
                   <button key={m.id} onClick={() => { setActiveMatchId(m.id); setView("match"); }}
@@ -844,7 +980,7 @@ export function HomePage() {
 
       {/* ═══ 3. PI BON MOMAN YO (dark green) ═══ */}
       <section className="bg-[#064E2A]">
-        <div className="max-w-[1280px] mx-auto px-4 py-8">
+        <div className="max-w-[1400px] mx-auto px-4 py-8">
           <div className="flex items-end justify-between mb-4">
             <h2 className="text-lg font-bold text-white">Pi bon moman yo</h2>
             <button onClick={() => setView("replays")} className="text-xs font-semibold text-[#F4C400] hover:underline flex items-center gap-1">
@@ -885,16 +1021,19 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* ═══ 4. KLASMAN (white) ═══ */}
+      {/* ═══ 4. KLASMAN + EKIP YO (white, merged on desktop) ═══ */}
       {teams.length > 0 && (
         <section className="bg-white">
-          <div className="max-w-[1280px] mx-auto px-4 py-8">
-            <div className="flex items-end justify-between mb-4">
-              <h2 className="text-lg font-bold text-[#064E2A]">Klasman</h2>
-              <button onClick={() => setView("standings")} className="text-xs font-semibold text-[#0B6B3A] hover:underline flex items-center gap-1">
-                Gade tout klasman <ChevronRight size={10} />
-              </button>
-            </div>
+          <div className="max-w-[1400px] mx-auto px-4 py-8">
+            <div className="lg:grid lg:grid-cols-[1fr_400px] lg:gap-6">
+              {/* LEFT — Standings table */}
+              <div>
+                <div className="flex items-end justify-between mb-4">
+                  <h2 className="text-lg font-bold text-[#064E2A]">Klasman</h2>
+                  <button onClick={() => setView("standings")} className="text-xs font-semibold text-[#0B6B3A] hover:underline flex items-center gap-1">
+                    Gade tout klasman <ChevronRight size={10} />
+                  </button>
+                </div>
             <div className="rounded-lg bg-[#F8F9FA] border border-[#E4E7EC] overflow-hidden">
               <table className="w-full">
                 <thead>
@@ -941,27 +1080,25 @@ export function HomePage() {
                 </tbody>
               </table>
             </div>
-          </div>
-        </section>
-      )}
+              </div>
 
-      {/* ═══ 5. EKIP YO (dark green) ═══ */}
-      {teams.length > 0 && (
-        <section className="bg-[#064E2A]">
-          <div className="max-w-[1280px] mx-auto px-4 py-8">
-            <div className="flex items-end justify-between mb-4">
-              <h2 className="text-lg font-bold text-white">Ekip yo</h2>
-              <button onClick={() => setView("teams")} className="text-xs font-semibold text-[#F4C400] hover:underline flex items-center gap-1">Tout ekip yo <ChevronRight size={10} /></button>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5">
-              {teams.slice(0, 6).map(t => (
-                <button key={t.id} onClick={() => { setActiveTeamId(t.id); setView("team-detail"); }}
-                  className="group rounded-lg bg-black/15 border border-white/10 p-3 flex flex-col items-center gap-2 hover:border-[#F4C400]/40 transition-all">
-                  <TeamCrest team={t} size={40} />
-                  <p className="text-[11px] font-bold text-white text-center">{t.name}</p>
-                  <p className="text-[9px] text-white/35">Gwoup {t.group}</p>
-                </button>
-              ))}
+              {/* RIGHT — Teams grid */}
+              <div className="mt-8 lg:mt-0">
+                <div className="flex items-end justify-between mb-4">
+                  <h2 className="text-lg font-bold text-[#064E2A]">Ekip yo</h2>
+                  <button onClick={() => setView("teams")} className="text-xs font-semibold text-[#0B6B3A] hover:underline flex items-center gap-1">Tout ekip yo <ChevronRight size={10} /></button>
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  {teams.slice(0, 6).map(t => (
+                    <button key={t.id} onClick={() => { setActiveTeamId(t.id); setView("team-detail"); }}
+                      className="group rounded-lg bg-[#F8F9FA] border border-[#E4E7EC] p-3 flex flex-col items-center gap-2 hover:border-[#F4C400] hover:shadow-md transition-all">
+                      <TeamCrest team={t} size={40} />
+                      <p className="text-[11px] font-bold text-[#101828] text-center">{t.name}</p>
+                      <p className="text-[9px] text-[#667085]">Gwoup {t.group}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -969,7 +1106,7 @@ export function HomePage() {
 
       {/* ═══ 6. JWÈ YO (white) — top scorers across all teams ═══ */}
       <section className="bg-white">
-        <div className="max-w-[1280px] mx-auto px-4 py-8">
+        <div className="max-w-[1400px] mx-auto px-4 py-8">
           <div className="flex items-end justify-between mb-4">
             <h2 className="text-lg font-bold text-[#064E2A]">Jwè yo</h2>
             <button onClick={() => setView("players")} className="text-xs font-semibold text-[#0B6B3A] hover:underline flex items-center gap-1">
