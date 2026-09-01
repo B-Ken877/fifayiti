@@ -11,6 +11,10 @@ import { PlayersPage } from "./players-page";
 import { StandingsPage } from "./standings-page";
 import { TournamentPage } from "./tournament-page";
 import { ReplaysPage } from "./replays-page";
+import { BettingPage } from "../betting/betting-page";
+import { WalletPage } from "../betting/wallet-page";
+import { BettorAuthPage } from "../betting/bettor-auth-page";
+import { BettingOperatorPage } from "../betting/betting-operator-page";
 import { BottomNav } from "./bottom-nav";
 
 export function PublicLayout() {
@@ -18,6 +22,19 @@ export function PublicLayout() {
 
   if (view.startsWith("admin-")) {
     return null;
+  }
+
+  // Betting views render full-screen (no public header/footer) — they have
+  // their own chrome + are the primary product surface for bettors.
+  if (view === "betting" || view === "betting-wallet" || view === "betting-login" || view === "betting-operator") {
+    return (
+      <main className="flex-1">
+        {view === "betting" && <BettingPage />}
+        {view === "betting-wallet" && <WalletPage />}
+        {view === "betting-login" && <BettorAuthPage />}
+        {view === "betting-operator" && <BettingOperatorPage />}
+      </main>
+    );
   }
 
   return (

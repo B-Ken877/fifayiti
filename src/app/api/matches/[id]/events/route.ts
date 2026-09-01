@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import path from "path";
 import { triggerBroadcastReplay } from "@/lib/streaming/replay-engine";
 import { pushBroadcastMatchUpdate } from "@/lib/streaming/broadcast-state";
+import { onOfficialEventConfirmed } from "@/lib/betting/settlement-engine";
 
 /**
  * POST /api/matches/[id]/events
@@ -227,6 +228,38 @@ export async function POST(
       }).catch((err) => {
         console.error("[events] instant replay trigger failed:", err?.message ?? err);
       });
+    }
+
+    // ── FIFAYITI PARIAJ: create an OfficialEvent + trigger settlement ──
+    // The betting settlement engine reads OfficialEvents (with sequence
+    // numbers + PENDING/CONFIRMED/CANCELLED status). We create one here
+    // (CONFIRMED — live operator events are confirmed on creation; a
+    // future "correct event" flow will create a CANCELLED + supersession
+    // chain) and fire the settlement engine to suspend + settle any
+    // affected markets. Failures never break the event creation itself.
+    try {
+      const nextSeq = await db.officialEvent.count({ where: { matchId: id } }) + 1;
+      const officialEvent = await db.officialEvent.create({
+        data: {
+          matchId: id,
+          matchEventId: event.id,
+          sequenceNumber: nextSeq,
+          eventType: body.kind,
+          teamId: body.teamId ?? null,
+          playerId: body.playerInId ?? null,
+          matchTime: `${minute}:${String(Math.floor((updatedMatch.clock ?? 0) % 60)).padStart(2, "0")}`,
+          status: "CONFIRMED",
+          operatorId: "live_operator",
+          confirmedAt: new Date(),
+          metadata: JSON.stringify({ description: body.description ?? "", half }),
+        },
+      });
+      // Fire the settlement engine (awaits so the lambda doesn't freeze it).
+      await onOfficialEventConfirmed(officialEvent.id).catch((err) => {
+        console.warn("[events] settlement trigger failed:", err?.message);
+      });
+    } catch (e: any) {
+      console.warn("[events] official event creation failed:", e?.message);
     }
 
     return NextResponse.json({ event, match: updatedMatch }, { status: 201 });

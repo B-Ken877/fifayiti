@@ -1,14 +1,14 @@
 "use client";
-import { Home, Trophy, Users, BarChart3, Film, Megaphone } from "lucide-react";
+import { Home, Trophy, Users, BarChart3, Film, Megaphone, Flame } from "lucide-react";
 import { useAppStore, type ViewKey } from "@/store/app-store";
 import { cn } from "@/lib/utils";
 
 const ITEMS: { icon: React.ElementType; label: string; view: ViewKey }[] = [
   { icon: Home, label: "Akèy", view: "home" },
   { icon: Megaphone, label: "Match", view: "match" },
+  { icon: Flame, label: "Pariaj", view: "betting" },
   { icon: Trophy, label: "Tounwa", view: "tournament" },
   { icon: Users, label: "Ekip", view: "teams" },
-  { icon: BarChart3, label: "Klasman", view: "standings" },
 ];
 
 export function BottomNav() {
@@ -24,7 +24,8 @@ export function BottomNav() {
           const Icon = item.icon;
           const active =
             view === item.view ||
-            (item.view === "teams" && (view === "team-detail" || view === "players"));
+            (item.view === "teams" && (view === "team-detail" || view === "players")) ||
+            (item.view === "betting" && (view === "betting-wallet" || view === "betting-login"));
           return (
             <button
               key={item.view}

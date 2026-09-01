@@ -228,6 +228,8 @@ model Match {
 
   events  MatchEvent[]
   replays Replay[]
+  bettingMarkets BettingMarket[]
+  officialEvents OfficialEvent[]
 }
 
 enum StageKind {
@@ -324,4 +326,317 @@ enum ReplayKind {
   KADON
   SUBSTITUSYON
   KAT
+}
+
+// ───────── FIFAYITI PARIAJ — P2P Betting Exchange ─────────
+//
+// Architecture: the Live Operator's official match events drive the
+// settlement engine. The Betting Operator curates ONE active market at
+// a time from a predefined template catalog. Users place fixed-stake
+// bets that match against opposing positions at the EXACT same stake.
+//
+// Money is tracked via a double-entry ledger (LedgerEntry) — never via
+// mutable balance fields alone. Wallet holds the current available +
+// reserved balances (denormalized from the ledger for fast reads).
+//
+// ⚠️ Vercel/SQLite note: wallet writes are ephemeral on Vercel's
+// serverless filesystem. The code is correct (atomic transactions,
+// double-entry ledger, concurrency-safe) but a real Postgres backend
+// is required before any real-money launch. See docs/BETTING-ARCHITECTURE.md.
+
+// ── Bettor accounts ──
+// Extends the existing User model with a betting-specific profile.
+// Regular bettors register with email + password (no hardcoded accounts).
+model Bettor {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  displayName  String?
+  phone        String?
+  status       BettorStatus @default(ACTIVE)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  wallet       Wallet?
+  bets         BetOrder[]
+  ledgerEntries LedgerEntry[]
+  auditLogs    BettingAuditLog[]
+}
+
+enum BettorStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+// ── Wallet ──
+// Denormalized from the ledger for fast balance reads. All mutations
+// go through the ledger (double-entry) — the wallet balances are a
+// CACHE of the ledger state, updated atomically with each ledger entry.
+//
+// All amounts are in INTEGER minor units (centimes) — 1 HTG = 100
+// centimes. NEVER use floating-point for money.
+model Wallet {
+  id              String   @id @default(cuid())
+  bettorId        String   @unique
+  bettor          Bettor   @relation(fields: [bettorId], references: [id], onDelete: Cascade)
+  availableCentimes  BigInt @default(0)   // spendable now
+  reservedCentimes  BigInt @default(0)   // locked in open bets
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([bettorId])
+}
+
+// ── Ledger ──
+// Immutable double-entry transaction log. Every money movement creates
+// a new row — historical entries are NEVER modified. The `balanceAfter`
+// field enables quick reconciliation (sum of all entries for a bettor
+// must equal their wallet.available + wallet.reserved).
+//
+// Transaction types follow a strict vocabulary:
+//   DEPOSIT        — funds added to wallet (external → wallet)
+//   WITHDRAWAL     — funds removed (wallet → external)
+//   BET_RESERVE    — funds moved from available → reserved (bet placed)
+//   BET_RELEASE    — funds moved from reserved → available (bet cancelled)
+//   BET_MATCH      — funds locked in a matched position (reserved → in-play)
+//   BET_SETTLE_WIN — winning position settled (in-play → available + winnings)
+//   BET_SETTLE_LOSS— losing position settled (in-play → forfeit)
+//   BET_REFUND     — cancelled market refunded (in-play → available)
+//   COMMISSION     — FIFAYITI's fee deducted from winnings
+//   ADJUSTMENT     — manual correction (admin only, audited)
+model LedgerEntry {
+  id              String   @id @default(cuid())
+  bettorId        String
+  bettor          Bettor   @relation(fields: [bettorId], references: [id], onDelete: Cascade)
+  amountCentimes BigInt                     // +credit / -debit in minor units
+  type            LedgerType
+  referenceType   String?                    // "bet_order" | "market" | "deposit" | ...
+  referenceId     String?                    // the related entity's id
+  balanceAfterCentimes BigInt                  // wallet balance after this entry
+  createdAt       DateTime @default(now())
+  metadata        String?                    // JSON blob for extra context
+
+  @@index([bettorId, createdAt])
+  @@index([referenceType, referenceId])
+}
+
+enum LedgerType {
+  DEPOSIT
+  WITHDRAWAL
+  BET_RESERVE
+  BET_RELEASE
+  BET_MATCH
+  BET_SETTLE_WIN
+  BET_SETTLE_LOSS
+  BET_REFUND
+  COMMISSION
+  ADJUSTMENT
+}
+
+// ── Stake pools ──
+// Backend-driven configuration of the allowed fixed stake amounts.
+// The Betting Operator enables/disables pools without code changes.
+// `order` controls the display order in the UI.
+model StakePool {
+  id            String   @id @default(cuid())
+  amountCentimes BigInt  @unique            // e.g. 5000 = 50 HTG
+  label         String                      // "50 HTG" (display)
+  enabled       Boolean  @default(true)
+  displayOrder  Int      @default(0)
+  createdAt     DateTime @default(now())
+}
+
+// ── Market templates ──
+// The predefined catalog of approved betting markets. The Betting
+// Operator selects from these — they cannot create arbitrary markets.
+// Each template defines: the question text (Creole), the selection
+// structure, and the settlement rule (which official event resolves it).
+model MarketTemplate {
+  id            String   @id @default(cuid())
+  code          String   @unique            // "NEXT_GOAL" | "ANOTHER_GOAL" | ...
+  label         String                      // "Kiyès ki pral make?" (Creole)
+  description   String?
+  selectionMode  SelectionMode               // TWO_TEAM | YES_NO | OVER_UNDER
+  settleOnEvent  String                     // event kind that triggers settlement
+  settleRule    String                      // JSON: { "nextGoal": "winningSelection = scoringTeam" }
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  markets      BettingMarket[]
+}
+
+enum SelectionMode {
+  TWO_TEAM       // Team A vs Team B
+  YES_NO         // YES vs NO
+  OVER_UNDER     // Over vs Under a threshold
+}
+
+// ── Betting markets ──
+// An instance of a market template for a specific match. Only ONE
+// market per match may be in OPEN/SETTLING state at a time (enforced
+// server-side). The lifecycle is a strict state machine:
+//
+//   DRAFT → PUBLISHED → OPEN → SUSPENDED ↔ OPEN → CLOSED → SETTLING → SETTLED
+//                                                 ↘ CANCELLED
+model BettingMarket {
+  id              String   @id @default(cuid())
+  matchId         String
+  match           Match    @relation(fields: [matchId], references: [id])
+  templateId      String
+  template        MarketTemplate @relation(fields: [templateId], references: [id])
+  status          MarketStatus @default(DRAFT)
+  question        String                       // denormalized from template (Creole)
+  config          String                       // JSON: template-specific params (threshold, time window, etc.)
+  publishedAt     DateTime?
+  openedAt        DateTime?
+  closedAt        DateTime?
+  settledAt       DateTime?
+  cancelledAt     DateTime?
+  settleEventId   String?                      // the OfficialEvent that settled this market
+  settleOutcome   String?                      // JSON: { "winningSelection": "HOME", "reason": "..." }
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  selections      MarketSelection[]
+  bets            BetOrder[]
+
+  @@index([matchId, status])
+  @@index([status])
+}
+
+enum MarketStatus {
+  DRAFT
+  PUBLISHED
+  OPEN
+  SUSPENDED
+  CLOSED
+  SETTLING
+  SETTLED
+  CANCELLED
+  EXPIRED
+}
+
+// ── Market selections ──
+// The predefined choices for a market (e.g. "DELMAS", "KENSCOFF" for
+// NEXT_GOAL; "WI", "NON" for ANOTHER_GOAL). Each selection has a key
+// used by the settlement engine to determine the winner.
+model MarketSelection {
+  id          String   @id @default(cuid())
+  marketId    String
+  market      BettingMarket @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  key         String                        // "HOME" | "AWAY" | "YES" | "NO" | "OVER" | "UNDER"
+  label       String                        // "DELMAS" (display, Creole)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  bets        BetOrder[]
+
+  @@index([marketId])
+  @@unique([marketId, key])
+}
+
+// ── Bet orders ──
+// A user's bet on a market selection at a fixed stake. The matching
+// engine pairs opposing bets at the SAME stake. Lifecycle:
+//
+//   CREATED → RESERVED → OPEN → MATCHED → SETTLED
+//                     ↘ CANCELLED → FUNDS RELEASED
+//   MATCHED → MARKET_CANCELLED → REFUNDED
+model BetOrder {
+  id              String   @id @default(cuid())
+  bettorId        String
+  bettor          Bettor   @relation(fields: [bettorId], references: [id])
+  marketId        String
+  market          BettingMarket @relation(fields: [marketId], references: [id])
+  selectionId     String
+  selection       MarketSelection @relation(fields: [selectionId], references: [id])
+  stakeCentimes   BigInt                       // exact stake (must match opposing bet)
+  status          BetStatus @default(CREATED)
+  matchedWithId   String?                      // the opposing BetOrder this is matched with
+  matchedAt       DateTime?
+  settledAt       DateTime?
+  settleOutcome   String?                      // "WIN" | "LOSS" | "REFUND"
+  payoutCentimes  BigInt?                       // amount returned to bettor on settlement
+  idempotencyKey  String?  @unique             // client-supplied to prevent duplicate submissions
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  matchedWith     BetOrder? @relation("BetMatch", fields: [matchedWithId], references: [id])
+  inverseMatches  BetOrder[] @relation("BetMatch")
+
+  @@index([marketId, status])
+  @@index([bettorId, status])
+  @@index([marketId, selectionId, stakeCentimes, status])
+  @@index([stakeCentimes, status])
+}
+
+enum BetStatus {
+  CREATED
+  RESERVED
+  OPEN
+  MATCHED
+  CANCELLED
+  MARKET_CANCELLED
+  SETTLED
+}
+
+// ── Official events (formalized for betting) ──
+// The existing MatchEvent model is the live operator's raw event log.
+// This model adds the formal fields needed for betting settlement:
+// sequence numbers, PENDING/CONFIRMED/CANCELLED status, and supersession
+// chains (event 108 supersedes cancelled event 102).
+//
+// A single MatchEvent may spawn one OfficialEvent (or none, for events
+// that don't affect betting). The settlement engine reads OfficialEvents.
+model OfficialEvent {
+  id              String   @id @default(cuid())
+  matchId         String
+  match           Match    @relation(fields: [matchId], references: [id])
+  matchEventId    String?                     // link to the source MatchEvent
+  sequenceNumber  Int                        // monotonic per-match ordering
+  eventType       String                     // GOL | GOAL_CANCELLED | YELLOW_CARD | ...
+  teamId          String?
+  playerId        String?
+  matchTime       String?                    // "27:14"
+  status          OfficialEventStatus @default(PENDING)
+  supersedesId    String?                    // the OfficialEvent this corrects
+  operatorId      String?                    // who created it
+  metadata        String?                    // JSON blob
+  createdAt       DateTime @default(now())
+  confirmedAt     DateTime?
+  cancelledAt     DateTime?
+
+  supersedes      OfficialEvent? @relation("EventSupersession", fields: [supersedesId], references: [id])
+  supersededBy    OfficialEvent[] @relation("EventSupersession")
+
+  @@index([matchId, sequenceNumber])
+  @@index([matchId, status, eventType])
+}
+
+enum OfficialEventStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+// ── Audit log ──
+// Every sensitive operator/system action is logged here. Never deleted.
+model BettingAuditLog {
+  id          String   @id @default(cuid())
+  actorType   String                       // "betting_operator" | "live_operator" | "system" | "admin"
+  actorId     String?                       // bettorId or staff id
+  action      String                        // "market.publish" | "market.suspend" | "bet.place" | ...
+  targetType  String?                       // "market" | "bet" | "wallet" | "event"
+  targetId    String?
+  beforeState String?                       // JSON snapshot
+  afterState  String?                       // JSON snapshot
+  reason      String?
+  bettorId    String?
+  bettor      Bettor?  @relation(fields: [bettorId], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([actorType, createdAt])
+  @@index([targetType, targetId])
+  @@index([bettorId, createdAt])
 }

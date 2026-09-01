@@ -12,6 +12,7 @@ export type FifayitiRole =
   | "president"
   | "director"
   | "live_operator"
+  | "betting_operator"
   | "cameraman"
   | "cameraman1"
   | "cameraman2"
@@ -43,6 +44,12 @@ export const CREDENTIALS: CredentialRecord[] = [
     email: "live_operator@fifayiti.com",
     saltHex: "c47b0af1ce3fd559b6dbc256b59a8275",
     hashHex: "02e025757c089de8d791e59989cfce424553dc2bb87d73e9b6c3d6df47b37282",
+  },
+  {
+    role: "betting_operator",
+    email: "betting@fifayiti.com",
+    saltHex: "e4cf5edf07a701dc824e36254ce6148c",
+    hashHex: "939dce1abe4d427fed7a80f6d3cf192886ab9b80315407bedd128bc8b7eba65e",
   },
   {
     role: "cameraman",
