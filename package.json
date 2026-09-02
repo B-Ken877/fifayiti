@@ -5,16 +5,20 @@
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
     "prebuild": "cp -f .next/standalone/prisma/dev.db prisma/dev.db 2>/dev/null || true",
-    "postinstall": "DATABASE_URL=${DATABASE_URL:-file:./dev.db} prisma generate",
-    "build": "DATABASE_URL=${DATABASE_URL:-file:./dev.db} prisma db push --skip-generate && next build && if [ -d .next/standalone ]; then cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/; fi",
-    "build:vps": "DATABASE_URL=${DATABASE_URL:-file:./dev.db} prisma db push --skip-generate && next build && if [ -d .next/standalone ]; then cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/; fi",
+    "postinstall": "./scripts/postinstall.sh",
+    "build": "next build",
+    "build:vercel": "next build",
+    "build:vps": "prisma db push --skip-generate && next build && if [ -d .next/standalone ]; then cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/; fi",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
-    "db:push": "DATABASE_URL=${DATABASE_URL:-file:./dev.db} prisma db push --accept-data-loss",
-    "db:generate": "DATABASE_URL=${DATABASE_URL:-file:./dev.db} prisma generate",
+    "db:push": "prisma db push --accept-data-loss",
+    "db:push:prod": "./scripts/prisma-prod.sh db push",
+    "db:generate": "prisma generate",
+    "db:generate:prod": "./scripts/prisma-prod.sh generate",
     "db:seed": "bun prisma/seed.ts",
-    "db:migrate": "DATABASE_URL=${DATABASE_URL:-file:./dev.db} prisma migrate dev",
-    "db:reset": "DATABASE_URL=${DATABASE_URL:-file:./dev.db} prisma migrate reset"
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:prod": "./scripts/prisma-prod.sh migrate deploy",
+    "db:reset": "prisma migrate reset"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

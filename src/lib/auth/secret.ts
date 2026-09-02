@@ -53,11 +53,6 @@ export function getBettingSecret(): string {
   return BETTING_SECRET_ENV ?? DEV_BETTING_SECRET;
 }
 
-// Backwards-compat: some existing imports use FIFAYITI_AUTH_SECRET directly.
-// We resolve it lazily so the throw happens at request time, not at import time.
-export const FIFAYITI_AUTH_SECRET = AUTH_SECRET_ENV ?? DEV_AUTH_SECRET;
-export const FIFAYITI_BETTING_SECRET = BETTING_SECRET_ENV ?? DEV_BETTING_SECRET;
-
 /** Diagnostics — does NOT log the value itself. */
 export function secretsConfigured() {
   return {

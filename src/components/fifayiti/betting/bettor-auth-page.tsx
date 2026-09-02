@@ -99,8 +99,12 @@ export function BettorAuthPage() {
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full bg-transparent outline-none text-sm text-[#101828] font-medium" placeholder="Imèl" />
             </Field>
             <Field icon={<Lock size={15} className="text-[#667085]" />}>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-transparent outline-none text-sm text-[#101828] font-medium" placeholder="Modpas (min 6 karaktè)" />
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-transparent outline-none text-sm text-[#101828] font-medium" placeholder="Modpas (min 8 karaktè, 1 chif)" />
             </Field>
+
+            {mode === "register" && password && password.length < 8 && (
+              <p className="text-[10px] text-[#667085] px-1">Modpas dwe gen omwen 8 karaktè ak omwen yon chif.</p>
+            )}
 
             {error && (
               <p className="text-xs text-[#D92D20] font-semibold bg-[#D92D20]/10 rounded-lg px-3 py-2">{error}</p>
@@ -108,7 +112,7 @@ export function BettorAuthPage() {
 
             <button
               onClick={submit}
-              disabled={loading || !email || !password}
+              disabled={loading || !email || !password || (mode === "register" && password.length < 8)}
               className="w-full py-3 rounded-xl bg-[#064E2A] text-white font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {loading ? <Loader2 size={15} className="animate-spin" /> : (mode === "login" ? "Konekte" : "Kreye kont")}

@@ -12,14 +12,15 @@
 
 import { createHmac, timingSafeEqual } from "crypto";
 import type { FifayitiRole } from "./credentials";
-import { FIFAYITI_AUTH_SECRET } from "./secret";
+import { getAuthSecret } from "./secret";
 
 const COOKIE_NAME = "fifayiti-session";
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 8; // 8 hours — covers a match day
 
-/** Hardcoded HMAC secret (see src/lib/auth/secret.ts). */
+/** HMAC secret — uses the validation function so production fails-closed
+ *  if the env var is missing (rather than silently using the DEV fallback). */
 function getSecret(): string {
-  return FIFAYITI_AUTH_SECRET;
+  return getAuthSecret();
 }
 
 interface SessionPayload {

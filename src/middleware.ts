@@ -21,15 +21,16 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
-import { FIFAYITI_AUTH_SECRET } from "@/lib/auth/secret";
+import { getAuthSecret } from "@/lib/auth/secret";
 
 export const runtime = "nodejs";
 
 const COOKIE_NAME = "fifayiti-session";
 
-/** Hardcoded HMAC secret (see src/lib/auth/secret.ts). */
+/** HMAC secret — uses the validation function so production fails-closed
+ *  if the env var is missing (rather than silently using the DEV fallback). */
 function getSecret(): string {
-  return FIFAYITI_AUTH_SECRET;
+  return getAuthSecret();
 }
 
 function verifyToken(token: string): string | null {
