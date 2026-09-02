@@ -1,5 +1,6 @@
 "use client";
 import { useAppStore } from "@/store/app-store";
+import { cn } from "@/lib/utils";
 import { PublicHeader } from "./header";
 import { PublicFooter } from "./footer";
 import { HomePage } from "./home-page";
@@ -24,16 +25,23 @@ export function PublicLayout() {
     return null;
   }
 
-  // Betting views render full-screen (no public header/footer) — they have
-  // their own chrome + are the primary product surface for bettors.
+  // Betting views render full-screen with the bottom nav always visible
+  // (no public header/footer — betting has its own chrome, but the bottom
+  // nav is the primary navigation so it MUST stay).
+  // Exception: the auth page is a focused flow (login/register) — hide
+  // the bottom nav there so the user isn't distracted mid-flow.
   if (view === "betting" || view === "betting-wallet" || view === "betting-login" || view === "betting-operator") {
+    const showNav = view !== "betting-login";
     return (
-      <main className="flex-1">
-        {view === "betting" && <BettingPage />}
-        {view === "betting-wallet" && <WalletPage />}
-        {view === "betting-login" && <BettorAuthPage />}
-        {view === "betting-operator" && <BettingOperatorPage />}
-      </main>
+      <div className="min-h-screen flex flex-col">
+        <main className={cn("flex-1", showNav && "pb-24 md:pb-0")}>
+          {view === "betting" && <BettingPage />}
+          {view === "betting-wallet" && <WalletPage />}
+          {view === "betting-login" && <BettorAuthPage />}
+          {view === "betting-operator" && <BettingOperatorPage />}
+        </main>
+        {showNav && <BottomNav />}
+      </div>
     );
   }
 

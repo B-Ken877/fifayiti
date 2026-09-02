@@ -16,7 +16,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useAppStore } from "@/store/app-store";
 import {
-  Flame, Wallet, ArrowLeft, Zap, Check, X, Loader2, Clock, Users, Trophy,
+  Flame, Wallet, ArrowLeft, Zap, Check, X, Loader2, Clock, Users, Trophy, LogIn,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatHtg } from "@/lib/betting/types";
@@ -185,10 +185,18 @@ export function BettingPage() {
               </div>
             </div>
           </div>
-          {bettor?.authenticated && (
+          {bettor?.authenticated ? (
             <button onClick={() => setView("betting-wallet")} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 transition">
               <Wallet size={14} className="text-[#F4C400]" />
               <span className="text-xs font-bold text-white tnum">{formatHtg(walletAvail)}</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => setView("betting-login")}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F4C400] hover:brightness-105 transition"
+            >
+              <LogIn size={13} className="text-[#064E2A]" />
+              <span className="text-xs font-extrabold text-[#064E2A]">Konekte</span>
             </button>
           )}
         </div>
@@ -222,6 +230,22 @@ export function BettingPage() {
                   <div className="w-3 h-3 rounded-sm" style={{ background: match.awayColor }} />
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ═══ NOT-AUTHENTICATED BANNER ═══ */}
+          {bettor && !bettor.authenticated && (
+            <div className="rounded-xl bg-gradient-to-r from-[#F4C400] to-[#E0B000] p-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-extrabold text-[#064E2A]">Kreye kont pou w parie</p>
+                <p className="text-[11px] text-[#064E2A]/80 mt-0.5">Ou jwenn 500 HTG demo pou kòmanse.</p>
+              </div>
+              <button
+                onClick={() => setView("betting-login")}
+                className="px-4 py-2 rounded-lg bg-[#064E2A] text-white text-xs font-extrabold whitespace-nowrap hover:bg-[#0B6B3A] transition"
+              >
+                Enskri / Konekte
+              </button>
             </div>
           )}
 
@@ -305,19 +329,26 @@ export function BettingPage() {
 
                 {/* Place bet button */}
                 {selectedSelection && selectedStake && (
-                  <button
-                    onClick={placeBet}
-                    disabled={placing || !bettor?.authenticated}
-                    className="w-full py-3.5 rounded-xl bg-[#064E2A] text-white font-extrabold text-sm shadow-lg hover:bg-[#0B6B3A] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {placing ? (
-                      <><Loader2 size={15} className="animate-spin" /> N ap trete...</>
-                    ) : !bettor?.authenticated ? (
-                      "Konekte pou w parie"
-                    ) : (
-                      <>Pariye {formatHtg(selectedStake)}</>
-                    )}
-                  </button>
+                  bettor?.authenticated ? (
+                    <button
+                      onClick={placeBet}
+                      disabled={placing}
+                      className="w-full py-3.5 rounded-xl bg-[#064E2A] text-white font-extrabold text-sm shadow-lg hover:bg-[#0B6B3A] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {placing ? (
+                        <><Loader2 size={15} className="animate-spin" /> N ap trete...</>
+                      ) : (
+                        <>Pariye {formatHtg(selectedStake)}</>
+                      )}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setView("betting-login")}
+                      className="w-full py-3.5 rounded-xl bg-[#F4C400] text-[#064E2A] font-extrabold text-sm shadow-lg hover:brightness-105 transition-all flex items-center justify-center gap-2"
+                    >
+                      <LogIn size={15} /> Konekte pou w parie
+                    </button>
+                  )
                 )}
 
                 {!selectedSelection && (
