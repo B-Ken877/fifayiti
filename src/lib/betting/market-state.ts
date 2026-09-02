@@ -73,10 +73,15 @@ export async function createMarketAtomic(opts: {
   try {
     return await db.$transaction(async (tx) => {
       // Re-check inside the transaction (close the race window).
+      // Count ALL non-terminal markets — DRAFT + OPEN + PUBLISHED + SUSPENDED
+      // + SETTLING. A DRAFT market counts because the betting operator is
+      // preparing to publish it; allowing a second concurrent DRAFT would
+      // let two markets race to OPEN. (Terminal states: SETTLED, CANCELLED,
+      // EXPIRED — those don't block a new market.)
       const active = await tx.bettingMarket.count({
         where: {
           matchId: opts.matchId,
-          status: { in: ["OPEN", "SETTLING", "PUBLISHED", "SUSPENDED"] },
+          status: { in: ["DRAFT", "OPEN", "SETTLING", "PUBLISHED", "SUSPENDED"] },
         },
       });
       if (active > 0) {

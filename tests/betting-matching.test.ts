@@ -72,15 +72,18 @@ describe("Matching engine — exact stake rule", () => {
   });
 
   afterAll(async () => {
+    // Clean up in dependency order (children first, then parents).
+    await db.betOrder.deleteMany({ where: { marketId } }).catch(() => {});
+    await db.marketSelection.deleteMany({ where: { marketId } }).catch(() => {});
+    await db.bettingMarket.deleteMany({ where: { id: marketId } }).catch(() => {});
+    await db.match.deleteMany({ where: { id: matchId } }).catch(() => {});
     for (const id of [bettorA, bettorB, bettorC]) {
-      await db.ledgerEntry.deleteMany({ where: { bettorId: id } });
-      await db.wallet.deleteMany({ where: { bettorId: id } });
-      await db.bettor.delete({ where: { id } });
+      await db.bettingAuditLog.deleteMany({ where: { bettorId: id } }).catch(() => {});
+      await db.paymentIntent.deleteMany({ where: { bettorId: id } }).catch(() => {});
+      await db.ledgerEntry.deleteMany({ where: { bettorId: id } }).catch(() => {});
+      await db.wallet.deleteMany({ where: { bettorId: id } }).catch(() => {});
+      await db.bettor.deleteMany({ where: { id } }).catch(() => {});
     }
-    await db.betOrder.deleteMany({ where: { marketId } });
-    await db.marketSelection.deleteMany({ where: { marketId } });
-    await db.bettingMarket.deleteMany({ where: { id: marketId } });
-    await db.match.deleteMany({ where: { id: matchId } });
     await db.$disconnect();
   });
 

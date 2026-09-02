@@ -64,16 +64,20 @@ describe("Settlement engine", () => {
   });
 
   afterAll(async () => {
+    // Clean up in dependency order (children first, then parents).
+    await db.betOrder.deleteMany({ where: { marketId } }).catch(() => {});
+    await db.settlementTransaction.deleteMany({ where: { marketId } }).catch(() => {});
+    await db.officialEvent.deleteMany({ where: { matchId } }).catch(() => {});
+    await db.marketSelection.deleteMany({ where: { marketId } }).catch(() => {});
+    await db.bettingMarket.deleteMany({ where: { id: marketId } }).catch(() => {});
+    await db.match.deleteMany({ where: { id: matchId } }).catch(() => {});
     for (const id of [bettorA, bettorB]) {
-      await db.ledgerEntry.deleteMany({ where: { bettorId: id } });
-      await db.wallet.deleteMany({ where: { bettorId: id } });
-      await db.bettor.delete({ where: { id } });
+      await db.bettingAuditLog.deleteMany({ where: { bettorId: id } }).catch(() => {});
+      await db.paymentIntent.deleteMany({ where: { bettorId: id } }).catch(() => {});
+      await db.ledgerEntry.deleteMany({ where: { bettorId: id } }).catch(() => {});
+      await db.wallet.deleteMany({ where: { bettorId: id } }).catch(() => {});
+      await db.bettor.deleteMany({ where: { id } }).catch(() => {});
     }
-    await db.officialEvent.deleteMany({ where: { matchId } });
-    await db.betOrder.deleteMany({ where: { marketId } });
-    await db.marketSelection.deleteMany({ where: { marketId } });
-    await db.bettingMarket.deleteMany({ where: { id: marketId } });
-    await db.match.deleteMany({ where: { id: matchId } });
     await db.$disconnect();
   });
 
@@ -120,13 +124,16 @@ describe("Settlement engine", () => {
     expect(b?.status).toBe("SETTLED");
     expect(b?.settleOutcome).toBe("LOSS");
 
-    // Verify the wallet: A should have ~950 HTG (500 stake + 475 winnings - 25 commission).
+    // Verify the wallet: A started with 1000 HTG, bet 500 (reserved), won.
+    // After settlement A has: 1000 - 500 (reserved) + 950 (payout) = 1450 HTG.
+    // Payout = 500 stake + 475 winnings (pot 1000 - 5% commission = 50) = 950.
     const walletA = await getWallet(bettorA);
     const expectedPayout = 95000n; // 50000 + 47500 (pot 100000 - 5% commission = 5000)
-    expect(walletA?.availableCentimes).toBe(expectedPayout);
+    const expectedBalanceA = 100000n - 50000n + expectedPayout; // 1450 HTG
+    expect(walletA?.availableCentimes).toBe(expectedBalanceA);
 
-    // B should have 0 (lost their 500).
+    // B started with 1000 HTG, bet 500 (reserved), lost. Remaining = 500 HTG.
     const walletB = await getWallet(bettorB);
-    expect(walletB?.availableCentimes).toBe(0n);
+    expect(walletB?.availableCentimes).toBe(50000n);
   });
 });
