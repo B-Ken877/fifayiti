@@ -52,10 +52,27 @@ fi
 
 # ── Validate DATABASE_URL ──
 if [ -z "${DATABASE_URL:-}" ]; then
+  echo "→ DATABASE_URL not found locally. Attempting to pull from Vercel..."
+  echo "   (Requires: npx vercel login + npx vercel link)"
+  if npx vercel whoami 2>/dev/null | grep -q "@"; then
+    if npx vercel env pull --environment=production --yes "$ROOT_DIR/.env.vercel" 2>/dev/null; then
+      set -a; source "$ROOT_DIR/.env.vercel"; set +a
+      rm -f "$ROOT_DIR/.env.vercel"
+      echo "✅ Pulled DATABASE_URL from Vercel."
+    else
+      echo "❌ Could not pull env vars. Run: npx vercel link"
+      exit 1
+    fi
+  else
+    echo "❌ Not authenticated with Vercel."
+    echo "   Either: npx vercel login && npx vercel link"
+    echo "   Or:     export DATABASE_URL='postgres://...' && bash scripts/setup-prod-db.sh"
+    exit 1
+  fi
+fi
+
+if [ -z "${DATABASE_URL:-}" ]; then
   echo "❌ DATABASE_URL is not set."
-  echo "   Set it in your shell:  export DATABASE_URL='postgres://...'"
-  echo "   Or put it in a local .env file."
-  echo "   The connection string is NEVER logged or committed."
   exit 1
 fi
 
