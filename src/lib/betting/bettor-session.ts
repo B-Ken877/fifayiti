@@ -8,7 +8,7 @@
 // signing context) so a bettor can never escalate to an admin role.
 
 import { createHmac, timingSafeEqual, scryptSync, randomBytes } from "crypto";
-import { FIFAYITI_AUTH_SECRET } from "@/lib/auth/secret";
+import { FIFAYITI_BETTING_SECRET } from "@/lib/auth/secret";
 import { db } from "@/lib/db";
 
 const BETTOR_COOKIE_NAME = "fifayiti-bettor";
@@ -23,7 +23,7 @@ interface BettorSessionPayload {
 
 function sign(payload: BettorSessionPayload): string {
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const mac = createHmac("sha256", FIFAYITI_AUTH_SECRET + ":bettor").update(body).digest("hex");
+  const mac = createHmac("sha256", FIFAYITI_BETTING_SECRET).update(body).digest("hex");
   return `${body}.${mac}`;
 }
 
@@ -31,7 +31,7 @@ function verify(token: string): BettorSessionPayload | null {
   const parts = token.split(".");
   if (parts.length !== 2) return null;
   const [body, mac] = parts;
-  const expectedMac = createHmac("sha256", FIFAYITI_AUTH_SECRET + ":bettor").update(body).digest("hex");
+  const expectedMac = createHmac("sha256", FIFAYITI_BETTING_SECRET).update(body).digest("hex");
   const a = Buffer.from(mac, "hex");
   const b = Buffer.from(expectedMac, "hex");
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;

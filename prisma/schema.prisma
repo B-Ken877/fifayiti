@@ -1,14 +1,32 @@
 // FIFAYITI domain model — with Competition + Group + Knockout support.
+//
+// DATABASE PROVIDER STRATEGY (spec P0.4):
+//   The provider is chosen at MIGRATION TIME via the DATABASE_PROVIDER env
+//   var (or the --schema argument to prisma). Local dev uses SQLite
+//   (default); production PARIAJ financial data uses PostgreSQL.
+//
+//   Local dev:    DATABASE_PROVIDER=sqlite    DATABASE_URL=file:./dev.db
+//   Staging/Prod: DATABASE_PROVIDER=postgresql DATABASE_URL=postgres://...
+//
+//   The financial models (Bettor, Wallet, LedgerEntry, BetOrder,
+//   BettingMarket, OfficialEvent, SettlementTransaction, PaymentIntent,
+//   Account, AccountEntry) carry PostgreSQL-specific constraints where
+//   possible (e.g. the partial unique index on active markets). On SQLite
+//   those constraints are approximated by application code + a runtime
+//   check — see `enforceOneActiveMarket` in market-state.ts.
 
 generator client {
   provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
+// Default provider is SQLite for local dev. For production PostgreSQL, the
+// `scripts/prisma-prod.sh` wrapper passes `--schema prisma/schema.postgres.prisma`
+// (which sets provider = "postgresql") — same model definitions, different
+// datasource block. The runtime client reads DATABASE_URL regardless.
 datasource db {
   provider = "sqlite"
-  // Hardcoded by design — no env vars. Path is relative to this schema
-  // file (prisma/dev.db). Move the file if you need a different location.
-  url      = "file:./dev.db"
+  url      = env("DATABASE_URL")
 }
 
 // ───────── Auth ─────────
@@ -361,6 +379,7 @@ model Bettor {
   bets         BetOrder[]
   ledgerEntries LedgerEntry[]
   auditLogs    BettingAuditLog[]
+  paymentIntents PaymentIntent[]
 }
 
 enum BettorStatus {
@@ -500,6 +519,7 @@ model BettingMarket {
 
   selections      MarketSelection[]
   bets            BetOrder[]
+  settlements     SettlementTransaction[]
 
   @@index([matchId, status])
   @@index([status])
@@ -639,4 +659,150 @@ model BettingAuditLog {
   @@index([actorType, createdAt])
   @@index([targetType, targetId])
   @@index([bettorId, createdAt])
+}
+
+// ───────── PARIAJ FINANCIAL-SAFETY MODELS (spec P0.3 / P0.6 / P1.1 / P0.5) ─────────
+
+// ── PaymentIntent — pending deposit awaiting provider webhook (spec P0.3) ──
+// The client creates one of these via /api/betting/wallet/deposit/initiate.
+// NO money is created at intent time. Money is created ONLY when the
+// provider's webhook verifies a real payment (see /api/betting/webhooks/[provider]).
+model PaymentIntent {
+  id              String   @id @default(cuid())
+  bettorId        String
+  provider        String                    // "moncash" | "natcash" | "demo"
+  amountCentimes  BigInt
+  currency        String   @default("HTG")
+  status          String  @default("pending")  // pending | paid | failed | expired
+  providerPaymentId String?                  // set by the webhook
+  returnUrl       String
+  redirectUrl     String?                    // provider's checkout URL (for the client)
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+  confirmedAt     DateTime?
+  rawWebhookPayload String?                  // the verified webhook body (audit)
+
+  bettor          Bettor   @relation(fields: [bettorId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerPaymentId])
+  @@index([bettorId, status, createdAt])
+  @@index([status, expiresAt])
+}
+
+// ── SettlementTransaction — idempotent settlement record (spec P0.6) ──
+// Exactly ONE row per (marketId, settleEventId) pair. The unique constraint
+// guarantees that a duplicate settlement attempt (retry, server restart)
+// cannot create a second financial effect — it just hits the unique
+// constraint and the caller sees "already settled".
+model SettlementTransaction {
+  id              String   @id @default(cuid())
+  marketId        String
+  settleEventId   String                      // the OfficialEvent that settled this
+  outcome         String                      // "settled" | "refunded" | "no_action"
+  winningSelectionKey String?
+  winnerCount      Int     @default(0)
+  loserCount       Int     @default(0)
+  refundedCount    Int     @default(0)
+  totalPayoutCentimes BigInt  @default(0)
+  totalCommissionCentimes BigInt @default(0)
+  metadata        String?
+  createdAt       DateTime @default(now())
+
+  market          BettingMarket @relation(fields: [marketId], references: [id])
+
+  // ONE settlement per (market, triggering event). A duplicate retry
+  // violates this constraint and the caller sees "already settled".
+  @@unique([marketId, settleEventId])
+  @@index([marketId])
+}
+
+// ── Account — double-entry accounting (spec P1.1) ────────────────────
+// Each Account is a bucket of money. Every financial movement creates TWO
+// AccountEntry rows: a debit on one account + a credit on another, with
+// matching amounts (balanced). The Wallet table is a denormalized view
+// for fast reads; the AccountEntry table is the source of truth.
+//
+// Account types:
+//   bettor_available    — the bettor's spendable balance
+//   bettor_reserved     — funds locked in unmatched open bets
+//   betting_in_play     — funds locked in matched positions (counter-party)
+//   platform_custody    — FIFAYITI's custodial holding (deposits land here)
+//   platform_commission — FIFAYITI's earned commission revenue
+//   platform_settlement — clearing account during settlement
+model Account {
+  id              String   @id @default(cuid())
+  type            String                     // bettor_available | bettor_reserved | ...
+  bettorId        String?                    // null for platform accounts
+  currency        String   @default("HTG")
+  balanceCentimes BigInt  @default(0)       // running balance (denormalized)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  entries         AccountEntry[]
+
+  @@unique([type, bettorId])
+  @@index([type])
+  @@index([bettorId])
+}
+
+// ── AccountEntry — immutable double-entry line (spec P1.1) ────────────
+// Each row is ONE side of a transaction. A balanced transaction always
+// produces TWO rows with matching amounts on opposing sides (debit +
+// credit). The `transactionId` groups the rows of a single transaction
+// so reconciliation can verify Σ debits == Σ credits per transaction.
+model AccountEntry {
+  id              String   @id @default(cuid())
+  transactionId   String                     // groups debit + credit of one transaction
+  accountId       String
+  account         Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  direction       String                     // "debit" | "credit"
+  amountCentimes BigInt                      // always positive
+  ledgerType      String                     // DEPOSIT | BET_RESERVE | BET_MATCH | SETTLE_WIN | ...
+  referenceType   String?                    // "bet_order" | "payment_intent" | "market" | ...
+  referenceId     String?
+  createdAt       DateTime @default(now())
+  metadata        String?
+
+  @@index([accountId, createdAt])
+  @@index([transactionId])
+  @@index([ledgerType])
+}
+
+// ── OutboxEvent — transactional outbox for the event → settlement chain (spec Part 7) ──
+// The official-events route creates the MatchEvent + OfficialEvent +
+// an OutboxEvent entry in the SAME transaction. A background poller (or
+// webhook) processes the outbox: pushes LiveKit updates, triggers replay,
+// fires the settlement engine. Each outbox row is processed exactly once
+// (idempotency key = outbox id) — retries on failure are safe.
+model OutboxEvent {
+  id              String   @id @default(cuid())
+  aggregateType   String                     // "match" | "market" | "bet"
+  aggregateId     String
+  eventType       String                     // "OfficialEventConfirmed" | "MarketSettled" | ...
+  payload         String                     // JSON
+  status          String   @default("pending")  // pending | processing | done | failed
+  attempts        Int      @default(0)
+  lastError       String?
+  processedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([aggregateType, aggregateId])
+}
+
+// ── RateLimitAudit — record when rate limits fire (spec Part 6) ──────
+// The in-memory store doesn't persist, but a 429 response logs a row here
+// so admins can audit abuse patterns. (Cheap append-only; never queried
+// in the hot path.)
+model RateLimitAudit {
+  id          String   @id @default(cuid())
+  scope       String                     // "login" | "register" | "bet_place" | ...
+  identifier  String                     // IP or bettorId
+  limit       Int
+  windowMs     Int
+  createdAt   DateTime @default(now())
+
+  @@index([scope, identifier, createdAt])
+  @@index([createdAt])
 }

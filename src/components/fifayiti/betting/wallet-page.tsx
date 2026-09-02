@@ -67,20 +67,35 @@ export function WalletPage() {
 
   useEffect(() => { load(); const i = setInterval(load, 10000); return () => clearInterval(i); }, [load]);
 
-  const handleDeposit = async () => {
+  const handleDeposit = async (provider: "moncash" | "natcash" | "demo" = "demo") => {
     const centimes = BigInt(Math.round(parseFloat(depositAmt) * 100));
     if (centimes <= 0n || centimes > 1_000_000n) return;
     setDepositing(true);
     try {
-      const res = await fetch("/api/betting/wallet/deposit", {
+      // Use the new payment-provider flow. In dev/test the "demo" provider
+      // simulates a verified webhook; in production only real providers
+      // (MonCash/Natcash) work — the demo returns 403.
+      const res = await fetch("/api/betting/wallet/deposit/initiate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amountCentimes: centimes.toString() }),
+        body: JSON.stringify({
+          amountCentimes: centimes.toString(),
+          provider,
+          returnUrl: "/betting-wallet",
+        }),
       });
+      const data = await res.json();
       if (res.ok) {
         setDepositOpen(false);
         setDepositAmt("");
         load();
+        if (data.redirectUrl) {
+          // Real provider — redirect to checkout.
+          window.location.href = data.redirectUrl;
+        }
+      } else {
+        setWithdrawToast(data.error ?? "Erè depo.");
+        setTimeout(() => setWithdrawToast(null), 4000);
       }
     } finally { setDepositing(false); }
   };
@@ -215,7 +230,7 @@ export function WalletPage() {
               <div className="space-y-2 mb-4">
                 {/* MonCash placeholder */}
                 <button
-                  onClick={handleDeposit}
+                  onClick={() => handleDeposit("moncash")}
                   disabled={depositing || !depositAmt}
                   className="w-full flex items-center gap-3 p-3 rounded-xl border-2 border-[#E4E7EC] hover:border-[#F4C400] transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
@@ -231,7 +246,7 @@ export function WalletPage() {
 
                 {/* Natcash placeholder */}
                 <button
-                  onClick={handleDeposit}
+                  onClick={() => handleDeposit("natcash")}
                   disabled={depositing || !depositAmt}
                   className="w-full flex items-center gap-3 p-3 rounded-xl border-2 border-[#E4E7EC] hover:border-[#F4C400] transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
@@ -245,9 +260,10 @@ export function WalletPage() {
                   {depositing && <Loader2 size={14} className="text-[#667085] animate-spin" />}
                 </button>
 
-                {/* Demo / test deposit */}
+                {/* Demo / test deposit (dev only) */}
+                {process.env.NODE_ENV !== "production" && (
                 <button
-                  onClick={handleDeposit}
+                  onClick={() => handleDeposit("demo")}
                   disabled={depositing || !depositAmt}
                   className="w-full flex items-center gap-3 p-3 rounded-xl border-2 border-dashed border-[#F4C400] bg-[#F4C400]/5 hover:bg-[#F4C400]/10 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
@@ -260,10 +276,11 @@ export function WalletPage() {
                   </div>
                   {depositing && <Loader2 size={14} className="text-[#667085] animate-spin" />}
                 </button>
+                )}
               </div>
 
               <p className="text-[9px] text-[#667085] text-center mb-3">
-                ⚠️ MonCash ak Natcash yo ap konfigire. Pou kounye a, sèlman Demo Depo ap mache.
+                ⚠️ MonCash ak Natcash yo ap konfigire. Pou kounye a, sèlman Demo Depo ap mache (dev sèlman).
               </p>
 
               <button

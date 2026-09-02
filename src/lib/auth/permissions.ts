@@ -1,94 +1,104 @@
-// Permission system — pure types + matrix (server-safe, no client imports).
+// FIFAYITI — centralized authorization layer.
 //
-// Originally this file was "use client" because the `usePermission` hook
-// was colocated. That made it impossible to import from server code
-// (API routes, middleware) without dragging React in. Now this file is
-// pure data + pure functions; the React hook lives in
-// `src/lib/auth/use-permission.ts` (client-only).
+// All role/permission checks go through this module. Never scatter
+// `role === "president" || ...` strings across the codebase — import
+// the helpers here so the permission matrix lives in ONE place and can
+// be audited + changed without hunting for call sites.
 //
-// PILOT CAVEAT: the matrix here matches the spec, but the server MUST
-// independently verify role + permission on every privileged operation.
-// `hasPermission(role, perm)` here is the canonical source — both
-// client (via usePermission) and server (via API route handlers) call
-// into this.
+// PERMISSION MATRIX (server-enforced):
+//
+//   canCreateOfficialMatchEvent  → LIVE_OPERATOR only
+//   canManageBettingMarkets      → BETTING_OPERATOR only
+//   canTriggerEmergencySuspend   → BETTING_OPERATOR + PRESIDENT + DIRECTOR
+//   canManageWallet              → the bettor themselves (id checked at call site)
+//   canManageSystem              → ADMIN (PRESIDENT)
+//   canSettleMarket              → SYSTEM only (settlement engine — never a human)
+//
+// IMPORTANT: PRESIDENT / DIRECTOR are federation administrators. They can
+// oversee the platform but they CANNOT create official match events or
+// publish betting markets — those are operational roles with their own
+// accountability. PRESIDENT/DIRECTOR CAN trigger emergency betting suspension
+// (kill switch for risk).
 
-export type Permission =
-  | "competition.view" | "competition.manage"
-  | "teams.view" | "teams.manage"
-  | "players.view" | "players.verify"
-  | "schedule.view" | "schedule.manage" | "schedule.approve"
-  | "matches.view" | "matches.control" | "matches.correct"
-  | "replays.view" | "replays.manage"
-  | "finance.view" | "finance.manage"
-  | "discipline.view" | "discipline.manage"
-  | "admins.view" | "admins.manage"
-  | "settings.view" | "settings.manage";
+import type { FifayitiRole } from "./credentials";
 
-// Roles — `cameraman` is new (camera-streaming operator role).
-// `live_operator` runs the broadcast control desk (slot/preview picker,
-// score panel, broadcast on/off). `cameraman` connects a single camera
-// feed to LiveKit. Both can read matches; cameraman has no admin
-// workspace access (they never see the SPA).
-export type Role =
-  | "president"
-  | "director"
-  | "live_operator"
-  | "cameraman"
-  | "cameraman1"
-  | "cameraman2"
-  | "cameraman3"
-  | "team_admin";
+// ── Approved official event catalog (spec P0.1) ──────────────────────
+// The live operator may ONLY create these event types. The events route
+// rejects anything else with 400.
+export const OFFICIAL_EVENT_TYPES = [
+  "MATCH_STARTED",
+  "GOL",
+  "GOAL_CANCELLED",
+  "YELLOW_CARD",
+  "KAT_JON",          // legacy alias for YELLOW_CARD (existing data uses this)
+  "RED_CARD",
+  "KAT_WOUJ",         // legacy alias for RED_CARD
+  "SUBSTITUTION",
+  "RANPLASMAN",       // legacy alias for SUBSTITUTION
+  "PENALTY_AWARDED",
+  "PENALTY_SCORED",
+  "PENALTY_MISSED",
+  "KOMANSE",          // legacy alias for MATCH_STARTED
+  "HALF_TIME",
+  "MWATYE_TAN",       // legacy alias for HALF_TIME
+  "SECOND_HALF_STARTED",
+  "DEZYEM_MITAN",     // legacy alias for SECOND_HALF_STARTED
+  "MATCH_PAUSED",
+  "MATCH_RESUMED",
+  "MATCH_ENDED",
+  "FEN_MATCH",        // legacy alias for MATCH_ENDED
+  "MATCH_ABANDONED",
+  "FOT",              // foul (existing)
+  "KONÈ",             // corner (existing)
+] as const;
 
-const ALL_PERMISSIONS: Permission[] = [
-  "competition.view", "competition.manage",
-  "teams.view", "teams.manage",
-  "players.view", "players.verify",
-  "schedule.view", "schedule.manage", "schedule.approve",
-  "matches.view", "matches.control", "matches.correct",
-  "replays.view", "replays.manage",
-  "finance.view", "finance.manage",
-  "discipline.view", "discipline.manage",
-  "admins.view", "admins.manage",
-  "settings.view", "settings.manage",
-];
+export type OfficialEventType = (typeof OFFICIAL_EVENT_TYPES)[number];
 
-export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
-  president: [...ALL_PERMISSIONS],
-  director: [
-    "competition.view", "competition.manage",
-    "teams.view", "teams.manage",
-    "players.view", "players.verify",
-    "schedule.view", "schedule.manage", // NOT schedule.approve (president only)
-    "matches.view", "matches.control", "matches.correct",
-    "replays.view", "replays.manage",
-    "finance.view", "finance.manage",
-    "discipline.view", "discipline.manage",
-    "admins.view", // NOT admins.manage (president only)
-    "settings.view", "settings.manage",
-  ],
-  live_operator: [
-    "matches.view", "matches.control", "matches.correct",
-    "replays.view", "replays.manage",
-  ],
-  cameraman: [
-    "matches.view", // read-only — just needs to know which slot is "on TV"
-  ],
-  // Each cameramanN is bound to slot N (enforced by middleware + login
-  // redirect). Permissions are identical to the legacy cameraman role.
-  cameraman1: ["matches.view"],
-  cameraman2: ["matches.view"],
-  cameraman3: ["matches.view"],
-  team_admin: [
-    "teams.view",
-    "players.view",
-    "schedule.view",
-  ],
-};
-
-export function hasPermission(role: Role, permission: Permission): boolean {
-  return ROLE_PERMISSIONS[role]?.includes(permission) ?? false;
+/** Validate that a string is an approved official event type. */
+export function isValidEventType(t: string): t is OfficialEventType {
+  return (OFFICIAL_EVENT_TYPES as readonly string[]).includes(t);
 }
 
-export function hasAnyPermission(role: Role, permissions: Permission[]): boolean {
-  return permissions.some((p) => hasPermission(role, p));
+// ── Permission checks ─────────────────────────────────────────────────
+
+/** LIVE_OPERATOR only — can create/confirm/correct official match events. */
+export function canCreateOfficialMatchEvent(role: FifayitiRole | null): boolean {
+  return role === "live_operator";
 }
+
+/** BETTING_OPERATOR only — can publish/suspend/close/cancel betting markets. */
+export function canManageBettingMarkets(role: FifayitiRole | null): boolean {
+  return role === "betting_operator";
+}
+
+/**
+ * Emergency betting suspension kill-switch.
+ * BETTING_OPERATOR (their desk) + PRESIDENT + DIRECTOR (federation admins
+ * can kill betting during a crisis). This is the ONLY betting operation
+ * PRESIDENT/DIRECTOR can perform — they cannot create/publish markets.
+ */
+export function canTriggerEmergencySuspend(role: FifayitiRole | null): boolean {
+  return role === "betting_operator" || role === "president" || role === "director";
+}
+
+/** System-only settlement. NEVER a human role — the settlement engine calls this. */
+export function canSettleMarket(role: FifayitiRole | null): boolean {
+  return false; // humans never settle; the engine does it on official events
+}
+
+/** ADMIN operations (user admin, system config, audit access). */
+export function canManageSystem(role: FifayitiRole | null): boolean {
+  return role === "president" || role === "director";
+}
+
+/** Camera operator — can access their assigned camera slot only. */
+export function canOperateCamera(role: FifayitiRole | null): boolean {
+  return role === "cameraman" || role === "cameraman1" ||
+         role === "cameraman2" || role === "cameraman3" ||
+         role === "live_operator" || role === "president" || role === "director";
+}
+
+/** Standardized 401 response for unauthenticated requests. */
+export const UNAUTHORIZED = { status: 401, error: "Ou pa otorize." } as const;
+/** Standardized 403 response for insufficient role. */
+export const FORBIDDEN = { status: 403, error: "Ou pa gen dwa pou aksyon sa a." } as const;

@@ -1,36 +1,21 @@
-// POST /api/betting/wallet/deposit
-// Demo deposit (admin/bettor self-service for testing).
-// ⚠️ Real payment integration (MonCash/Natcash) is NOT wired — this is
-//    a testing endpoint that creates a ledger DEPOSIT entry.
+// POST /api/betting/wallet/deposit  (LEGACY — DISABLED, spec P0.3)
+//
+// This endpoint previously allowed an authenticated bettor to create a
+// DEPOSIT ledger entry by submitting an amount — which is unacceptable
+// for real-money betting. It has been replaced by the payment-provider
+// flow at /api/betting/wallet/deposit/initiate + /api/betting/webhooks/[provider].
+//
+// This route now returns 410 Gone with a pointer to the new flow so any
+// old client code gets a clear error instead of silently crediting money.
 
-import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedBettor } from "@/lib/betting/bettor-session";
-import { deposit } from "@/lib/betting/wallet";
-import { logBettingAction } from "@/lib/betting/audit";
+import { NextResponse } from "next/server";
 
-export async function POST(req: NextRequest) {
-  const bettor = await getAuthenticatedBettor(req.headers.get("cookie"));
-  if (!bettor) {
-    return NextResponse.json({ error: "Ou pa konekte." }, { status: 401 });
-  }
-
-  const body = await req.json();
-  const amountCentimes = BigInt(body.amountCentimes ?? 0);
-  if (amountCentimes <= 0n || amountCentimes > 1_000_000n) {
-    return NextResponse.json({ error: "Montan pa valid." }, { status: 400 });
-  }
-
-  await deposit(bettor.id, amountCentimes, `demo-${Date.now()}`);
-
-  await logBettingAction({
-    actorType: "system",
-    actorId: bettor.id,
-    action: "wallet.deposit",
-    targetType: "wallet",
-    targetId: bettor.id,
-    bettorId: bettor.id,
-    afterState: { amount: amountCentimes.toString() },
-  });
-
-  return NextResponse.json({ ok: true, deposited: amountCentimes.toString() });
+export async function POST() {
+  return NextResponse.json(
+    {
+      error: "Endpoint sa a pa disponib ankò. Itilize /api/betting/wallet/deposit/initiate.",
+      redirect: "/api/betting/wallet/deposit/initiate",
+    },
+    { status: 410 },
+  );
 }

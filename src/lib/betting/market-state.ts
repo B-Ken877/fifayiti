@@ -36,10 +36,76 @@ export async function hasActiveMarket(matchId: string): Promise<boolean> {
   const count = await db.bettingMarket.count({
     where: {
       matchId,
-      status: { in: ["OPEN", "SETTLING", "PUBLISHED"] },
+      status: { in: ["OPEN", "SETTLING", "PUBLISHED", "SUSPENDED"] },
     },
   });
   return count > 0;
+}
+
+/**
+ * ATOMIC one-active-market enforcement (spec P0.5).
+ *
+ * The race condition: two concurrent market-create requests both call
+ * `hasActiveMarket`, both see "no active market", both create. To prevent
+ * this, the check + the create happen inside a single Prisma transaction.
+ *
+ * On PostgreSQL this is backed by a partial unique index
+ *   CREATE UNIQUE INDEX one_active_market_per_match
+ *   ON "BettingMarket" ("matchId") WHERE status IN ('OPEN','SETTLING','PUBLISHED','SUSPENDED');
+ * which makes the second create throw P2002 (unique violation).
+ *
+ * On SQLite (no partial unique indexes in Prisma's schema DSL) we
+ * approximate by re-counting inside the transaction. Prisma's SQLite
+ * transactions use BEGIN IMMEDIATE which serializes writes, so the second
+ * transaction's count sees the first's committed create.
+ *
+ * Returns:
+ *   { ok: true, market } on success
+ *   { ok: false, reason: "active market exists" } if the rule is violated
+ */
+export async function createMarketAtomic(opts: {
+  matchId: string;
+  templateId: string;
+  question: string;
+  config: string;
+  selections: { key: string; label: string; order: number }[];
+}): Promise<{ ok: boolean; market?: any; reason?: string }> {
+  try {
+    return await db.$transaction(async (tx) => {
+      // Re-check inside the transaction (close the race window).
+      const active = await tx.bettingMarket.count({
+        where: {
+          matchId: opts.matchId,
+          status: { in: ["OPEN", "SETTLING", "PUBLISHED", "SUSPENDED"] },
+        },
+      });
+      if (active > 0) {
+        return { ok: false, reason: "active market exists" };
+      }
+
+      const market = await tx.bettingMarket.create({
+        data: {
+          matchId: opts.matchId,
+          templateId: opts.templateId,
+          status: "DRAFT",
+          question: opts.question,
+          config: opts.config,
+        },
+      });
+      for (const s of opts.selections) {
+        await tx.marketSelection.create({
+          data: { marketId: market.id, key: s.key, label: s.label, order: s.order },
+        });
+      }
+      return { ok: true, market };
+    });
+  } catch (e: any) {
+    // PostgreSQL unique constraint violation → race lost.
+    if (String(e?.code ?? "").includes("P2002")) {
+      return { ok: false, reason: "active market exists (db constraint)" };
+    }
+    throw e;
+  }
 }
 
 /**

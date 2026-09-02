@@ -1,9 +1,8 @@
-// POST /api/betting/markets/[id]/close
-// OPEN/SUSPENDED → CLOSED. Betting operator only.
-// Closing stops new bets but doesn't settle (settlement happens on event).
+// POST /api/betting/markets/[id]/close — → CLOSED. BETTING_OPERATOR only.
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionRole } from "@/lib/auth/session";
+import { canManageBettingMarkets } from "@/lib/auth/permissions";
 import { transitionMarketStatus, pushMarketState } from "@/lib/betting/market-state";
 
 export async function POST(
@@ -11,19 +10,18 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const role = getSessionRole(req.headers.get("cookie"));
-  if (!role || !["betting_operator", "president", "director"].includes(role)) {
-    return NextResponse.json({ error: "Ou pa gen dwa." }, { status: 403 });
+  if (!role) return NextResponse.json({ error: "Ou pa otorize." }, { status: 401 });
+  if (!canManageBettingMarkets(role)) {
+    return NextResponse.json({ error: "Sèlman operatè pariaj ka fèmen mache." }, { status: 403 });
   }
-
   const { id } = await params;
-
-  // SUSPENDED → CLOSED (or OPEN → CLOSED — transitionMarketStatus allows both
-  // via SUSPENDED, so suspend first then close).
   try {
-    await transitionMarketStatus(id, "SUSPENDED", role);
-  } catch {}
-  await transitionMarketStatus(id, "CLOSED", role);
-  await pushMarketState(id);
-
-  return NextResponse.json({ ok: true, marketId: id, status: "CLOSED" });
+    // SUSPENDED → CLOSED (or OPEN → CLOSED via SUSPENDED).
+    try { await transitionMarketStatus(id, "SUSPENDED", role); } catch {}
+    await transitionMarketStatus(id, "CLOSED", role);
+    await pushMarketState(id);
+    return NextResponse.json({ ok: true, marketId: id, status: "CLOSED" });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message }, { status: 400 });
+  }
 }

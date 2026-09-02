@@ -9,12 +9,28 @@ import { getSessionRole } from "@/lib/auth/session";
 import { hasActiveMarket } from "@/lib/betting/market-state";
 import { logBettingAction } from "@/lib/betting/audit";
 import { MARKET_TEMPLATES } from "@/lib/betting/types";
+import { canManageBettingMarkets } from "@/lib/auth/permissions";
+import { createMarketAtomic } from "@/lib/betting/market-state";
+import { rateLimit, LIMITS, clientIp } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
-  // Auth: betting_operator (or president/director for oversight).
+  // Auth: BETTING_OPERATOR ONLY (spec Part 4). PRESIDENT/DIRECTOR cannot
+  // publish markets — they can only trigger emergency betting suspension.
   const role = getSessionRole(req.headers.get("cookie"));
-  if (!role || !["betting_operator", "president", "director"].includes(role)) {
-    return NextResponse.json({ error: "Ou pa gen dwa pou kreye mache pariaj." }, { status: 403 });
+  if (!role) {
+    return NextResponse.json({ error: "Ou pa otorize." }, { status: 401 });
+  }
+  if (!canManageBettingMarkets(role)) {
+    return NextResponse.json(
+      { error: "Sèlman operatè pariaj ka kreye mache." },
+      { status: 403 },
+    );
+  }
+
+  // Rate limit.
+  const rl = rateLimit("market_create", role, LIMITS.MARKET_PUB.limit, LIMITS.MARKET_PUB.windowMs);
+  if (!rl.allowed) {
+    return NextResponse.json({ error: "Trop demann." }, { status: 429 });
   }
 
   try {
@@ -22,14 +38,6 @@ export async function POST(req: NextRequest) {
     const { matchId, templateCode, config } = body;
     if (!matchId || !templateCode) {
       return NextResponse.json({ error: "matchId ak templateCode nesesè." }, { status: 400 });
-    }
-
-    // Enforce the one-active-market rule.
-    if (await hasActiveMarket(matchId)) {
-      return NextResponse.json(
-        { error: "Gen yon mache ki deja aktif pou match sa a. Fèmen li anvan ou kreye yon lòt." },
-        { status: 409 },
-      );
     }
 
     // Validate the template.
@@ -73,28 +81,27 @@ export async function POST(req: NextRequest) {
       configObj.goalsAtMarketOpen = (match.homeScore ?? 0) + (match.awayScore ?? 0);
     }
 
-    // Create the market (DRAFT status — operator must publish it).
-    const market = await db.bettingMarket.create({
-      data: {
-        matchId,
-        templateId: template.id,
-        status: "DRAFT",
-        question: template.label,
-        config: JSON.stringify(configObj),
-      },
+    // ATOMIC one-active-market enforcement (spec P0.5):
+    // check + create happen inside a single transaction. On PostgreSQL a
+    // partial unique index backs this; on SQLite the in-tx re-count
+    // approximates it. Concurrent create attempts → one wins, one gets
+    // { ok: false, reason: "active market exists" }.
+    const result = await createMarketAtomic({
+      matchId,
+      templateId: template.id,
+      question: template.label,
+      config: JSON.stringify(configObj),
+      selections,
     });
 
-    // Create the selections.
-    for (const s of selections) {
-      await db.marketSelection.create({
-        data: {
-          marketId: market.id,
-          key: s.key,
-          label: s.label,
-          order: s.order,
-        },
-      });
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: "Gen yon mache ki deja aktif pou match sa a. Fèmen li anvan ou kreye yon lòt." },
+        { status: 409 },
+      );
     }
+
+    const market = result.market!;
 
     await logBettingAction({
       actorType: "betting_operator",

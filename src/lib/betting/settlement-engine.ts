@@ -85,6 +85,14 @@ function shouldEventSettleMarket(eventType: string, settleOnEvent: string, templ
 
 /**
  * Settle a single market: compute the winner, settle all matched bets.
+ *
+ * IDEMPOTENCY (spec P0.6):
+ *   The FIRST thing this does inside the transaction is attempt to create a
+ *   SettlementTransaction row with @@unique([marketId, settleEventId]).
+ *   If a duplicate settlement attempt runs (retry, server restart, concurrent
+ *   trigger), the unique constraint throws and we return "already settled"
+ *   WITHOUT creating any financial effect. A bettor can never receive
+ *   winnings twice.
  */
 async function settleMarket(marketId: string, triggeringEvent: any): Promise<SettlementResult> {
   try {
@@ -100,6 +108,30 @@ async function settleMarket(marketId: string, triggeringEvent: any): Promise<Set
       if (!market) return { marketId, outcome: "no_action", reason: "market not found" };
       if (market.status === "SETTLED" || market.status === "CANCELLED") {
         return { marketId, outcome: "no_action", reason: `already ${market.status}` };
+      }
+
+      // ── IDEMPOTENCY GUARD ────────────────────────────────────────────
+      // Try to insert a SettlementTransaction row. If it exists already
+      // (unique on marketId + settleEventId), this settlement is a retry
+      // — return no_action without touching any wallet.
+      try {
+        await tx.settlementTransaction.create({
+          data: {
+            marketId,
+            settleEventId: triggeringEvent.id,
+            outcome: "settling",
+          },
+        });
+      } catch (e: any) {
+        // Unique constraint violation → duplicate settlement attempt.
+        if (String(e?.message ?? "").includes("Unique") || String(e?.code ?? "").includes("P2002")) {
+          return {
+            marketId,
+            outcome: "no_action",
+            reason: "already settled for this event (idempotent)",
+          };
+        }
+        throw e;
       }
 
       // ── Match abandoned → refund all matched bets ──
@@ -267,10 +299,22 @@ async function settleMarket(marketId: string, triggeringEvent: any): Promise<Set
         }
       }
 
-      // ── Finalize the market ──
+      // ── Finalize the market + the SettlementTransaction record ──
       await tx.bettingMarket.update({
         where: { id: marketId },
         data: { status: "SETTLED", settledAt: new Date() },
+      });
+
+      // Update the SettlementTransaction row (created at the start as a
+      // placeholder for the idempotency guard) with the real outcome.
+      await tx.settlementTransaction.updateMany({
+        where: { marketId, settleEventId: triggeringEvent.id },
+        data: {
+          outcome: "settled",
+          winningSelectionKey: winningKey,
+          winnerCount,
+          loserCount,
+        },
       });
 
       return {
