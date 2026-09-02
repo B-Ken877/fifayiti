@@ -120,6 +120,21 @@ export async function POST(req: NextRequest) {
     return res;
   } catch (e: any) {
     console.error("[betting/register] error:", e?.message);
+    // Translate infrastructure-misconfiguration errors to user-friendly
+    // Creole messages so the user doesn't see a raw env-var name.
+    const msg = String(e?.message ?? "");
+    if (msg.includes("FIFAYITI_BETTING_SECRET") || msg.includes("FIFAYITI_AUTH_SECRET")) {
+      return NextResponse.json(
+        { error: "Sèvè a pa konfigire pou pariaj. Kontakte administratè a." },
+        { status: 503 },
+      );
+    }
+    if (msg.includes("DATABASE") || msg.includes("Prisma") || msg.includes("connection")) {
+      return NextResponse.json(
+        { error: "Sèvè a pa ka konekte ak baz done a. Kontakte administratè a." },
+        { status: 503 },
+      );
+    }
     return NextResponse.json({ error: e?.message ?? "Erè sèvè." }, { status: 500 });
   }
 }

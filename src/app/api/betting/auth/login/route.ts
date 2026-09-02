@@ -55,6 +55,19 @@ export async function POST(req: NextRequest) {
     res.headers.set("Set-Cookie", cookie);
     return res;
   } catch (e: any) {
+    const msg = String(e?.message ?? "");
+    if (msg.includes("FIFAYITI_BETTING_SECRET") || msg.includes("FIFAYITI_AUTH_SECRET")) {
+      return NextResponse.json(
+        { error: "Sèvè a pa konfigire pou pariaj. Kontakte administratè a." },
+        { status: 503 },
+      );
+    }
+    if (msg.includes("DATABASE") || msg.includes("Prisma") || msg.includes("connection")) {
+      return NextResponse.json(
+        { error: "Sèvè a pa ka konekte ak baz done a. Kontakte administratè a." },
+        { status: 503 },
+      );
+    }
     return NextResponse.json({ error: e?.message }, { status: 500 });
   }
 }
