@@ -7,6 +7,7 @@ type BrandSize = "sm" | "md" | "lg" | "compact" | "mark";
 interface BrandMarkProps {
   size?: BrandSize;
   showWordmark?: boolean;
+  showTagline?: boolean;
   variant?: BrandVariant;
   className?: string;
 }
@@ -33,6 +34,7 @@ interface BrandMarkProps {
 export function BrandMark({
   size = "md",
   showWordmark = true,
+  showTagline = true,
   variant = "primary",
   className,
 }: BrandMarkProps) {
@@ -85,17 +87,19 @@ export function BrandMark({
           >
             FIFAYITI
           </span>
-          <span
-            className="font-medium tracking-wide mt-0.5"
-            style={{
-              fontSize: subSize,
-              color: subFg,
-              letterSpacing: "0.04em",
-              fontFamily: "var(--font-manrope), sans-serif",
-            }}
-          >
-            Federation Inter Football Ayiti
-          </span>
+          {showTagline && (
+            <span
+              className="font-medium tracking-wide mt-0.5"
+              style={{
+                fontSize: subSize,
+                color: subFg,
+                letterSpacing: "0.04em",
+                fontFamily: "var(--font-manrope), sans-serif",
+              }}
+            >
+              Federation Inter Football Ayiti
+            </span>
+          )}
         </div>
       )}
     </div>

@@ -172,22 +172,20 @@ export function BettingPage() {
 
   return (
     <div className="min-h-screen bg-[#064E2A] pb-20">
-      {/* ═══ HEADER — same normal FIFAYITI header + PARIAJ label ═══
-          Uses the BrandMark component (⚽ + "FIFAYITI" wordmark) that the
-          rest of the site uses, with "PARIAJ" added next to it in gold. */}
+      {/* ═══ HEADER — normal FIFAYITI header + PARIAJ label (no tagline) ═══ */}
       <div className="sticky top-0 z-30 bg-[#084C2A] text-white border-b border-fifayiti-line">
         <div className="max-w-[1400px] mx-auto px-4 lg:px-6">
-          <div className="flex items-center justify-between" style={{ height: 76 }}>
+          <div className="flex items-center justify-between" style={{ height: 60 }}>
             <button
               onClick={() => setView("home")}
               className="flex items-center cursor-pointer text-left"
               aria-label="FIFAYITI PARIAJ"
             >
-              <BrandMark size="md" variant="white" />
+              <BrandMark size="compact" variant="white" showTagline={false} />
               <span
                 className="ml-2 font-extrabold tracking-tight"
                 style={{
-                  fontSize: 22,
+                  fontSize: 18,
                   color: "#F4C400",
                   letterSpacing: "-0.02em",
                   fontFamily: "var(--font-archivo), var(--font-manrope), sans-serif",
@@ -410,22 +408,23 @@ export function BettingPage() {
               </div>
             </div>
           ) : (
-            <div
-              className="relative rounded-xl overflow-hidden min-h-[420px] flex items-center justify-center"
-              style={{
-                backgroundImage: "url(/pariaj-bg.png)",
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-              }}
-            >
-              {/* Dark scrim for text legibility over the photo */}
-              <div className="absolute inset-0 bg-gradient-to-br from-[#064E2A]/85 via-[#064E2A]/65 to-[#064E2A]/85" />
-              <div className="relative z-10 text-center px-6 py-10">
-                <div className="w-14 h-14 rounded-2xl bg-[#F4C400]/20 backdrop-blur-sm flex items-center justify-center mx-auto mb-4 border border-[#F4C400]/30">
-                  <Flame size={26} className="text-[#F4C400]" />
+            <div className="rounded-xl overflow-hidden bg-[#064E2A]">
+              {/* Full promotional image — shown in full (not cropped) */}
+              <img
+                src="/pariaj-bg.png"
+                alt="FIFAYITI PARIAJ — Pariez. Ganyen. Fè Ayiti Fye!"
+                className="w-full h-auto block"
+                style={{ aspectRatio: "853 / 1844", maxHeight: "70vh", objectFit: "cover", objectPosition: "top" }}
+              />
+              {/* Status overlay at the bottom of the image */}
+              <div className="px-5 py-4 bg-gradient-to-t from-[#064E2A] via-[#064E2A]/90 to-transparent -mt-16 relative">
+                <div className="text-center">
+                  <div className="w-12 h-12 rounded-2xl bg-[#F4C400]/15 backdrop-blur-sm flex items-center justify-center mx-auto mb-3 border border-[#F4C400]/30">
+                    <Flame size={22} className="text-[#F4C400]" />
+                  </div>
+                  <p className="text-sm font-extrabold text-white">Pa gen mache pariaj aktif kounye a</p>
+                  <p className="text-[11px] text-white/60 mt-1">Tounen lè operatè a louvri yon mache.</p>
                 </div>
-                <p className="text-base font-extrabold text-white">Pa gen mache pariaj aktif kounye a</p>
-                <p className="text-xs text-white/70 mt-1.5">Tounen lè operatè a louvri yon mache.</p>
               </div>
             </div>
           )}

@@ -139,20 +139,20 @@ export function WalletPage() {
 
   return (
     <div className="min-h-screen bg-[#064E2A] pb-20">
-      {/* ═══ HEADER — normal FIFAYITI header + PARIAJ label ═══ */}
+      {/* ═══ HEADER — normal FIFAYITI header + PARIAJ label (no tagline) ═══ */}
       <div className="sticky top-0 z-30 bg-[#084C2A] text-white border-b border-fifayiti-line">
         <div className="max-w-[1400px] mx-auto px-4 lg:px-6">
-          <div className="flex items-center justify-between" style={{ height: 76 }}>
+          <div className="flex items-center justify-between" style={{ height: 60 }}>
             <button
               onClick={() => setView("betting")}
               className="flex items-center cursor-pointer text-left"
               aria-label="FIFAYITI PARIAJ"
             >
-              <BrandMark size="md" variant="white" />
+              <BrandMark size="compact" variant="white" showTagline={false} />
               <span
                 className="ml-2 font-extrabold tracking-tight"
                 style={{
-                  fontSize: 22,
+                  fontSize: 18,
                   color: "#F4C400",
                   letterSpacing: "-0.02em",
                   fontFamily: "var(--font-archivo), var(--font-manrope), sans-serif",

@@ -60,7 +60,7 @@ export function BettorAuthPage() {
           {/* Logo — normal FIFAYITI ball + PARIAJ label */}
           <div className="text-center mb-6">
             <div className="flex items-center justify-center mb-3">
-              <BrandMark size="md" variant="white" />
+              <BrandMark size="md" variant="white" showTagline={false} />
               <span
                 className="ml-2 font-extrabold tracking-tight"
                 style={{
@@ -73,7 +73,6 @@ export function BettorAuthPage() {
                 PARIAJ
               </span>
             </div>
-            <p className="text-xs text-white/40">P2P Live Betting</p>
           </div>
 
           {/* Mode tabs */}
