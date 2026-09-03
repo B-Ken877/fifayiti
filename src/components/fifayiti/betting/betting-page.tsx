@@ -410,10 +410,23 @@ export function BettingPage() {
               </div>
             </div>
           ) : (
-            <div className="rounded-xl bg-white shadow p-8 text-center">
-              <Flame size={32} className="mx-auto text-[#F4C400] mb-2" />
-              <p className="text-sm font-bold text-[#101828]">Pa gen mache pariaj aktif kounye a</p>
-              <p className="text-xs text-[#667085] mt-1">Tounen lè operatè a louvri yon mache.</p>
+            <div
+              className="relative rounded-xl overflow-hidden min-h-[420px] flex items-center justify-center"
+              style={{
+                backgroundImage: "url(/pariaj-bg.png)",
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }}
+            >
+              {/* Dark scrim for text legibility over the photo */}
+              <div className="absolute inset-0 bg-gradient-to-br from-[#064E2A]/85 via-[#064E2A]/65 to-[#064E2A]/85" />
+              <div className="relative z-10 text-center px-6 py-10">
+                <div className="w-14 h-14 rounded-2xl bg-[#F4C400]/20 backdrop-blur-sm flex items-center justify-center mx-auto mb-4 border border-[#F4C400]/30">
+                  <Flame size={26} className="text-[#F4C400]" />
+                </div>
+                <p className="text-base font-extrabold text-white">Pa gen mache pariaj aktif kounye a</p>
+                <p className="text-xs text-white/70 mt-1.5">Tounen lè operatè a louvri yon mache.</p>
+              </div>
             </div>
           )}
 
