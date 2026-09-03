@@ -17,6 +17,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useAppStore } from "@/store/app-store";
 import {
   Flame, Wallet, ArrowLeft, Zap, Check, X, Loader2, Clock, Users, Trophy, LogIn,
+  ArrowDownToLine, TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatHtg } from "@/lib/betting/types";
@@ -69,6 +70,7 @@ export function BettingPage() {
   const [pools, setPools] = useState<StakePool[]>([]);
   const [bettor, setBettor] = useState<BettorInfo | null>(null);
   const [walletAvail, setWalletAvail] = useState<string>("0");
+  const [walletReserved, setWalletReserved] = useState<string>("0");
   const [bets, setBets] = useState<UserBet[]>([]);
   const [selectedSelection, setSelectedSelection] = useState<string | null>(null);
   const [selectedStake, setSelectedStake] = useState<string | null>(null);
@@ -93,6 +95,7 @@ export function BettingPage() {
       if (walletRes.ok) {
         const w = await walletRes.json();
         setWalletAvail(w.available ?? "0");
+        setWalletReserved(w.reserved ?? "0");
       }
       if (betsRes.ok) {
         const b = await betsRes.json();
@@ -168,38 +171,86 @@ export function BettingPage() {
 
   return (
     <div className="min-h-screen bg-[#064E2A] pb-20">
-      {/* ═══ HEADER ═══ */}
+      {/* ═══ HEADER — FIFAYITI PARIAJ with ball + inline wallet ═══ */}
       <div className="sticky top-0 z-30 bg-[#064E2A]/95 backdrop-blur-md border-b border-white/10">
-        <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <button onClick={() => setView("home")} className="p-1.5 -ml-1.5 rounded-lg hover:bg-white/10 transition">
+        <div className="max-w-[1400px] mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <button onClick={() => setView("home")} className="p-1.5 -ml-1.5 rounded-lg hover:bg-white/10 transition shrink-0">
               <ArrowLeft size={18} className="text-white" />
             </button>
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-md bg-[#F4C400] flex items-center justify-center">
-                <Flame size={15} className="text-[#064E2A]" />
+            <div className="flex items-center gap-2 min-w-0">
+              {/* Soccer ball badge — the PARIAJ identity */}
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#F4C400] to-[#E0B000] flex items-center justify-center shrink-0 shadow-md">
+                <svg viewBox="0 0 32 32" className="w-5 h-5" fill="none">
+                  <circle cx="16" cy="16" r="13" fill="#064E2A" />
+                  <path d="M16 6 L19 11 L17 16 L15 16 L13 11 Z" fill="#fff" />
+                  <path d="M16 16 L21 14 L25 18 L22 22 L18 20 Z" fill="#fff" />
+                  <path d="M16 16 L11 14 L7 18 L10 22 L14 20 Z" fill="#fff" />
+                  <path d="M16 16 L17 22 L13 24 L11 21 Z" fill="#fff" />
+                </svg>
               </div>
-              <div>
-                <h1 className="text-sm font-extrabold text-white tracking-tight">PARIAJ</h1>
-                <p className="text-[9px] text-white/40 -mt-0.5">P2P Live Betting</p>
+              <div className="min-w-0">
+                <h1 className="text-sm font-black text-white tracking-tight truncate">
+                  FIFAYITI <span className="text-[#F4C400]">PARIAJ</span>
+                </h1>
+                <p className="text-[8px] text-white/40 -mt-0.5 uppercase tracking-wider">P2P Live Betting</p>
               </div>
             </div>
           </div>
+
+          {/* Right side: inline wallet (authenticated) or login button */}
           {bettor?.authenticated ? (
-            <button onClick={() => setView("betting-wallet")} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 transition">
+            <button
+              onClick={() => setView("betting-wallet")}
+              className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 transition shrink-0"
+              title="Wè poche ou"
+            >
               <Wallet size={14} className="text-[#F4C400]" />
-              <span className="text-xs font-bold text-white tnum">{formatHtg(walletAvail)}</span>
+              <span className="text-xs font-extrabold text-white tnum">{formatHtg(walletAvail)}</span>
             </button>
           ) : (
             <button
               onClick={() => setView("betting-login")}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F4C400] hover:brightness-105 transition"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F4C400] hover:brightness-105 transition shrink-0"
             >
               <LogIn size={13} className="text-[#064E2A]" />
               <span className="text-xs font-extrabold text-[#064E2A]">Konekte</span>
             </button>
           )}
         </div>
+
+        {/* ═══ COMPACT WALLET STRIP — visible immediately after login ═══
+            Shows available + in-play + a small deposit button. Compact,
+            single-row, doesn't distract from the betting experience. */}
+        {bettor?.authenticated && (
+          <div className="max-w-[1400px] mx-auto px-4 pb-2.5 -mt-0.5">
+            <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-black/30 border border-white/10">
+              {/* Available */}
+              <div className="flex items-center gap-1.5">
+                <Wallet size={12} className="text-[#F4C400]" />
+                <span className="text-[9px] text-white/50 uppercase tracking-wider">Disponib</span>
+                <span className="text-xs font-bold text-white tnum">{formatHtg(walletAvail)}</span>
+              </div>
+              <div className="w-px h-4 bg-white/15" />
+              {/* In play */}
+              <div className="flex items-center gap-1.5">
+                <TrendingUp size={12} className="text-[#F4C400]" />
+                <span className="text-[9px] text-white/50 uppercase tracking-wider">Nan jwèt</span>
+                <span className="text-xs font-bold text-white tnum">{formatHtg(walletReserved)}</span>
+              </div>
+              <div className="flex-1" />
+              {/* Compact deposit button */}
+              <button
+                onClick={() => setView("betting-wallet")}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#F4C400]/15 hover:bg-[#F4C400]/25 border border-[#F4C400]/30 transition"
+                title="Depoze lajan"
+              >
+                <ArrowDownToLine size={11} className="text-[#F4C400]" />
+                <span className="text-[10px] font-bold text-[#F4C400]">Depoze</span>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="max-w-[1400px] mx-auto px-4 pt-4 lg:grid lg:grid-cols-[1fr_360px] lg:gap-5">

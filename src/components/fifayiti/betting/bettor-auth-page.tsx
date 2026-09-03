@@ -56,12 +56,20 @@ export function BettorAuthPage() {
 
       <div className="flex-1 flex items-center justify-center px-4 pb-12">
         <div className="w-full max-w-sm">
-          {/* Logo */}
+          {/* Logo — FIFAYITI PARIAJ with ball */}
           <div className="text-center mb-6">
-            <div className="w-14 h-14 rounded-2xl bg-[#F4C400] flex items-center justify-center mx-auto mb-3">
-              <Flame size={28} className="text-[#064E2A]" />
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#F4C400] to-[#E0B000] flex items-center justify-center mx-auto mb-3 shadow-lg">
+              <svg viewBox="0 0 32 32" className="w-8 h-8" fill="none">
+                <circle cx="16" cy="16" r="13" fill="#064E2A" />
+                <path d="M16 6 L19 11 L17 16 L15 16 L13 11 Z" fill="#fff" />
+                <path d="M16 16 L21 14 L25 18 L22 22 L18 20 Z" fill="#fff" />
+                <path d="M16 16 L11 14 L7 18 L10 22 L14 20 Z" fill="#fff" />
+                <path d="M16 16 L17 22 L13 24 L11 21 Z" fill="#fff" />
+              </svg>
             </div>
-            <h1 className="text-2xl font-black text-white tracking-tight">PARIAJ</h1>
+            <h1 className="text-2xl font-black text-white tracking-tight">
+              FIFAYITI <span className="text-[#F4C400]">PARIAJ</span>
+            </h1>
             <p className="text-xs text-white/40 mt-1">P2P Live Betting</p>
           </div>
 

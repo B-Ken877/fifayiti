@@ -138,13 +138,29 @@ export function WalletPage() {
 
   return (
     <div className="min-h-screen bg-[#064E2A] pb-20">
-      {/* ═══ HEADER ═══ */}
+      {/* ═══ HEADER — FIFAYITI PARIAJ with ball ═══ */}
       <div className="sticky top-0 z-30 bg-[#064E2A]/95 backdrop-blur-md border-b border-white/10">
-        <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center gap-2">
+        <div className="max-w-[1400px] mx-auto px-4 py-2.5 flex items-center gap-2">
           <button onClick={() => setView("betting")} className="p-1.5 -ml-1.5 rounded-lg hover:bg-white/10 transition">
             <ArrowLeft size={18} className="text-white" />
           </button>
-          <h1 className="text-base font-extrabold text-white">Poche</h1>
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#F4C400] to-[#E0B000] flex items-center justify-center shrink-0">
+              <svg viewBox="0 0 32 32" className="w-4 h-4" fill="none">
+                <circle cx="16" cy="16" r="13" fill="#064E2A" />
+                <path d="M16 6 L19 11 L17 16 L15 16 L13 11 Z" fill="#fff" />
+                <path d="M16 16 L21 14 L25 18 L22 22 L18 20 Z" fill="#fff" />
+                <path d="M16 16 L11 14 L7 18 L10 22 L14 20 Z" fill="#fff" />
+                <path d="M16 16 L17 22 L13 24 L11 21 Z" fill="#fff" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-sm font-black text-white tracking-tight">
+                FIFAYITI <span className="text-[#F4C400]">PARIAJ</span>
+              </h1>
+              <p className="text-[8px] text-white/40 -mt-0.5 uppercase tracking-wider">Poche</p>
+            </div>
+          </div>
         </div>
       </div>
 
