@@ -8,6 +8,7 @@ import { useAppStore, type ViewKey } from "@/store/app-store";
 const NAV: { label: string; view: ViewKey }[] = [
   { label: "Akèy", view: "home" },
   { label: "Match", view: "match" },
+  { label: "Pariaj", view: "betting" },
   { label: "Tounwa", view: "tournament" },
   { label: "Ekip", view: "teams" },
   { label: "Jwè", view: "players" },
