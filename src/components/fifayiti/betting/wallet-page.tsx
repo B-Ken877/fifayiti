@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatHtg, formatHtgPrecise } from "@/lib/betting/types";
+import { BrandMark } from "../brand-mark";
 
 interface WalletData {
   available: string;
@@ -138,76 +139,93 @@ export function WalletPage() {
 
   return (
     <div className="min-h-screen bg-[#064E2A] pb-20">
-      {/* ═══ HEADER — FIFAYITI PARIAJ with ball ═══ */}
-      <div className="sticky top-0 z-30 bg-[#064E2A]/95 backdrop-blur-md border-b border-white/10">
-        <div className="max-w-[1400px] mx-auto px-4 py-2.5 flex items-center gap-2">
-          <button onClick={() => setView("betting")} className="p-1.5 -ml-1.5 rounded-lg hover:bg-white/10 transition">
-            <ArrowLeft size={18} className="text-white" />
-          </button>
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#F4C400] to-[#E0B000] flex items-center justify-center shrink-0">
-              <svg viewBox="0 0 32 32" className="w-4 h-4" fill="none">
-                <circle cx="16" cy="16" r="13" fill="#064E2A" />
-                <path d="M16 6 L19 11 L17 16 L15 16 L13 11 Z" fill="#fff" />
-                <path d="M16 16 L21 14 L25 18 L22 22 L18 20 Z" fill="#fff" />
-                <path d="M16 16 L11 14 L7 18 L10 22 L14 20 Z" fill="#fff" />
-                <path d="M16 16 L17 22 L13 24 L11 21 Z" fill="#fff" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-sm font-black text-white tracking-tight">
-                FIFAYITI <span className="text-[#F4C400]">PARIAJ</span>
-              </h1>
-              <p className="text-[8px] text-white/40 -mt-0.5 uppercase tracking-wider">Poche</p>
-            </div>
+      {/* ═══ HEADER — normal FIFAYITI header + PARIAJ label ═══ */}
+      <div className="sticky top-0 z-30 bg-[#084C2A] text-white border-b border-fifayiti-line">
+        <div className="max-w-[1400px] mx-auto px-4 lg:px-6">
+          <div className="flex items-center justify-between" style={{ height: 76 }}>
+            <button
+              onClick={() => setView("betting")}
+              className="flex items-center cursor-pointer text-left"
+              aria-label="FIFAYITI PARIAJ"
+            >
+              <BrandMark size="md" variant="white" />
+              <span
+                className="ml-2 font-extrabold tracking-tight"
+                style={{
+                  fontSize: 22,
+                  color: "#F4C400",
+                  letterSpacing: "-0.02em",
+                  fontFamily: "var(--font-archivo), var(--font-manrope), sans-serif",
+                }}
+              >
+                PARIAJ
+              </span>
+            </button>
           </div>
         </div>
       </div>
 
       <div className="max-w-[600px] mx-auto px-4 pt-4 space-y-4">
-        {/* ═══ BALANCE CARD ═══ */}
-        <div className="rounded-2xl bg-gradient-to-br from-[#0B6B3A] to-[#064E2A] border border-white/10 p-5">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-white/60 uppercase tracking-wider">Total balans</span>
-            <Wallet size={16} className="text-[#F4C400]" />
+        {/* ═══ BALANCE CARD — professional, serious, like a real wallet ═══ */}
+        <div className="rounded-xl bg-white shadow-sm border border-[#E4E7EC] overflow-hidden">
+          {/* Card header */}
+          <div className="px-5 py-3 bg-[#F8F9FA] border-b border-[#E4E7EC] flex items-center justify-between">
+            <span className="text-[10px] font-bold text-[#667085] uppercase tracking-widest">Poche</span>
+            <Wallet size={14} className="text-[#667085]" />
           </div>
-          <p className="text-4xl font-black text-white tnum mb-4">{formatHtg(wallet?.total ?? "0")}</p>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-xl bg-white/10 p-3">
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <TrendingUp size={11} className="text-[#F4C400]" />
-                <span className="text-[10px] text-white/60 uppercase">Disponib</span>
+          {/* Total balance — the hero number */}
+          <div className="px-5 pt-5 pb-4">
+            <p className="text-[10px] font-semibold text-[#667085] uppercase tracking-wider mb-1">Total balans</p>
+            <p className="text-3xl font-black text-[#101828] tnum tracking-tight">
+              {formatHtg(wallet?.total ?? "0")}
+            </p>
+          </div>
+
+          {/* Divider */}
+          <div className="h-px bg-[#E4E7EC]" />
+
+          {/* Available + In-play — clean two-column breakdown */}
+          <div className="grid grid-cols-2">
+            <div className="px-5 py-4 border-r border-[#E4E7EC]">
+              <div className="flex items-center gap-1.5 mb-1">
+                <TrendingUp size={11} className="text-[#116B3A]" />
+                <span className="text-[9px] font-bold text-[#667085] uppercase tracking-wider">Disponib</span>
               </div>
-              <p className="text-lg font-bold text-white tnum">{formatHtg(wallet?.available ?? "0")}</p>
+              <p className="text-xl font-extrabold text-[#101828] tnum">{formatHtg(wallet?.available ?? "0")}</p>
+              <p className="text-[9px] text-[#667085] mt-0.5">Pou pariyaj</p>
             </div>
-            <div className="rounded-xl bg-white/10 p-3">
-              <div className="flex items-center gap-1.5 mb-0.5">
+            <div className="px-5 py-4">
+              <div className="flex items-center gap-1.5 mb-1">
                 <Clock size={11} className="text-[#F4C400]" />
-                <span className="text-[10px] text-white/60 uppercase">Nan jwèt</span>
+                <span className="text-[9px] font-bold text-[#667085] uppercase tracking-wider">Nan jwèt</span>
               </div>
-              <p className="text-lg font-bold text-white tnum">{formatHtg(wallet?.reserved ?? "0")}</p>
+              <p className="text-xl font-extrabold text-[#101828] tnum">{formatHtg(wallet?.reserved ?? "0")}</p>
+              <p className="text-[9px] text-[#667085] mt-0.5">Paryaj kouran</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 mt-3">
+          {/* Actions */}
+          <div className="grid grid-cols-2 border-t border-[#E4E7EC]">
             <button
               onClick={() => setDepositOpen(true)}
-              className="py-2.5 rounded-xl bg-[#F4C400] text-[#064E2A] font-bold text-sm hover:brightness-105 transition flex items-center justify-center gap-1.5"
+              className="py-3 text-sm font-bold text-[#064E2A] hover:bg-[#F8F9FA] transition flex items-center justify-center gap-1.5 border-r border-[#E4E7EC]"
             >
               <ArrowDownToLine size={14} /> Depoze
             </button>
             <button
               onClick={() => setWithdrawOpen(true)}
-              className="py-2.5 rounded-xl bg-white/10 text-white font-bold text-sm flex items-center justify-center gap-1.5 hover:bg-white/15 transition"
+              className="py-3 text-sm font-bold text-[#101828] hover:bg-[#F8F9FA] transition flex items-center justify-center gap-1.5"
             >
               <ArrowUpFromLine size={14} /> Retire
             </button>
           </div>
-          <p className="text-[9px] text-white/30 mt-2 text-center">
-            MonCash ak Natcash ap disponib pou tès. Peyman reyèl ap bientò.
-          </p>
         </div>
+
+        {/* Notice — subtle, not playful */}
+        <p className="text-[10px] text-white/40 text-center -mt-1">
+          MonCash ak Natcash ap konfigire. Pou kounye a, depo/retrè se pou tès sèlman.
+        </p>
 
         {/* ═══ DEPOSIT MODAL ═══ */}
         {depositOpen && (
@@ -401,32 +419,34 @@ export function WalletPage() {
           </div>
         )}
 
-        {/* ═══ TRANSACTIONS ═══ */}
+        {/* ═══ TRANSACTIONS — clean statement-style list ═══ */}
         <div>
-          <h3 className="text-sm font-bold text-white mb-2">Istwa tranzaksyon yo</h3>
+          <h3 className="text-[10px] font-bold text-white/60 uppercase tracking-widest mb-2 px-1">Istwa tranzaksyon yo</h3>
           {transactions.length === 0 ? (
-            <div className="rounded-xl bg-white/5 border border-white/10 p-6 text-center">
-              <p className="text-xs text-white/40">Pa gen tranzaksyon poko.</p>
+            <div className="rounded-xl bg-white shadow-sm border border-[#E4E7EC] p-8 text-center">
+              <p className="text-xs text-[#667085]">Pa gen tranzaksyon poko.</p>
             </div>
           ) : (
-            <div className="space-y-1.5">
-              {transactions.map((t) => {
+            <div className="rounded-xl bg-white shadow-sm border border-[#E4E7EC] overflow-hidden">
+              {transactions.map((t, i) => {
                 const meta = TYPE_LABELS[t.type] ?? { label: t.type, color: "text-[#667085]", sign: "" };
                 const amount = BigInt(t.amount);
                 const isPositive = amount > 0n;
                 return (
-                  <div key={t.id} className="rounded-lg bg-white shadow-sm p-3 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={cn("w-9 h-9 rounded-full flex items-center justify-center",
-                        isPositive ? "bg-[#116B3A]/10" : amount < 0n ? "bg-[#D92D20]/10" : "bg-[#F4C400]/10")}>
-                        {isPositive ? <Check size={15} className="text-[#116B3A]" /> : amount < 0n ? <X size={15} className="text-[#D92D20]" /> : <Clock size={15} className="text-[#F4C400]" />}
-                      </div>
-                      <div>
-                        <p className="text-xs font-bold text-[#101828]">{meta.label}</p>
-                        <p className="text-[10px] text-[#667085]">{new Date(t.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}</p>
-                      </div>
+                  <div
+                    key={t.id}
+                    className={cn(
+                      "px-4 py-3 flex items-center justify-between",
+                      i > 0 && "border-t border-[#E4E7EC]",
+                    )}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-[#101828]">{meta.label}</p>
+                      <p className="text-[10px] text-[#667085] mt-0.5">
+                        {new Date(t.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}
+                      </p>
                     </div>
-                    <p className={cn("text-sm font-extrabold tnum", meta.color)}>
+                    <p className={cn("text-sm font-extrabold tnum shrink-0 ml-3", meta.color)}>
                       {meta.sign}{formatHtgPrecise(amount < 0n ? -amount : amount)}
                     </p>
                   </div>
