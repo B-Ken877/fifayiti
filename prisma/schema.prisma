@@ -922,7 +922,7 @@ enum TeamDistributionStatus {
 model PlayerAllocation {
   id              String   @id @default(cuid())
   distributionId  String
-  distribution    TeamSupportDistribution @relation(fields: [distributionId], references: [id], onDelete: Cascade)
+  distribution    TeamSupportDistribution @relation(fields: [distributionId], references: [id])
   playerId        String
   playerName      String                     // snapshot (immutable)
   playerJerseyNumber Int                     // snapshot

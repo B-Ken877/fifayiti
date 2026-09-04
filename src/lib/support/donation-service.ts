@@ -154,7 +154,16 @@ export async function confirmDonation(
       },
     });
 
-    // Get the team account.
+    // Get or create custody + team accounts INSIDE the transaction.
+    let custodyAccount = await tx.account.findFirst({
+      where: { type: "platform_custody", bettorId: null, teamId: null, playerId: null },
+    });
+    if (!custodyAccount) {
+      custodyAccount = await tx.account.create({
+        data: { type: "platform_custody", currency: "HTG" },
+      });
+    }
+
     let teamAccount = await tx.account.findFirst({
       where: { type: "team_support", teamId: donation.teamId },
     });
@@ -164,25 +173,50 @@ export async function confirmDonation(
       });
     }
 
-    // Credit the team_support account directly — the money comes from
-    // the external payment provider (not from an internal account).
-    // This is the same pattern as bettor deposits: the inflow is external,
-    // so we just credit the receiving account + create an AccountEntry.
+    // ── P0 #1: TRUE DOUBLE-ENTRY ──────────────────────────────────────
+    // The real-world payment is external, but internally FIFAYITI must
+    // represent custody + ownership. Two AccountEntry rows, ONE transactionId.
+    //
+    //   DEBIT  platform_custody   (custody receives the external funds)
+    //   CREDIT team_support       (ownership transferred to the team fund)
+    //
+    // Both accounts increase. Σ debits == Σ credits.
     const txnId = randomUUID();
+    const amount = donation.amountCentimes;
+
+    // Debit platform_custody (increase — custody holds the external inflow).
+    await tx.account.update({
+      where: { id: custodyAccount.id },
+      data: { balanceCentimes: custodyAccount.balanceCentimes + amount },
+    });
+    await tx.accountEntry.create({
+      data: {
+        transactionId: txnId,
+        accountId: custodyAccount.id,
+        direction: "debit",
+        amountCentimes: amount,
+        ledgerType: "TEAM_DONATION",
+        referenceType: "team_donation",
+        referenceId: donation.id,
+        metadata: JSON.stringify({ teamId: donation.teamId, amount: amount.toString() }),
+      },
+    });
+
+    // Credit team_support (increase — team owns the funds).
     await tx.account.update({
       where: { id: teamAccount.id },
-      data: { balanceCentimes: teamAccount.balanceCentimes + donation.amountCentimes },
+      data: { balanceCentimes: teamAccount.balanceCentimes + amount },
     });
     await tx.accountEntry.create({
       data: {
         transactionId: txnId,
         accountId: teamAccount.id,
         direction: "credit",
-        amountCentimes: donation.amountCentimes,
+        amountCentimes: amount,
         ledgerType: "TEAM_DONATION",
         referenceType: "team_donation",
         referenceId: donation.id,
-        metadata: JSON.stringify({ teamId: donation.teamId, amount: donation.amountCentimes.toString() }),
+        metadata: JSON.stringify({ teamId: donation.teamId, amount: amount.toString() }),
       },
     });
 
