@@ -98,6 +98,18 @@ export function canOperateCamera(role: FifayitiRole | null): boolean {
          role === "live_operator" || role === "president" || role === "director";
 }
 
+// ── SIPÒ (Team Support) permissions ──────────────────────────────────
+
+/** PRESIDENT + DIRECTOR — can create + execute team support distributions. */
+export function canManageDistributions(role: FifayitiRole | null): boolean {
+  return role === "president" || role === "director";
+}
+
+/** TEAM_ADMIN — can VIEW their team's support fund + distributions (read-only). */
+export function canViewTeamSupport(role: FifayitiRole | null): boolean {
+  return role === "team_admin" || role === "president" || role === "director";
+}
+
 /** Standardized 401 response for unauthenticated requests. */
 export const UNAUTHORIZED = { status: 401, error: "Ou pa otorize." } as const;
 /** Standardized 403 response for insufficient role. */

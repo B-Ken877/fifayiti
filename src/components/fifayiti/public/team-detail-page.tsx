@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useAppStore } from "@/store/app-store";
 import { TeamCrest } from "../team-crest";
 import { MapPin, Wifi, ShieldCheck, Users, Trophy, ArrowLeft } from "lucide-react";
+import { TeamSupportSection } from "./team-support-section";
 
 interface PlayerRow {
   id: string;
@@ -156,6 +157,11 @@ export function TeamDetailPage() {
           <StatCard icon={ShieldCheck} label="Gardyen" value={gk.length} />
           <StatCard icon={Users} label="Defans" value={def.length} />
           <StatCard icon={Users} label="Atakan" value={fwd.length} />
+        </div>
+
+        {/* ═══ FIFAYITI SIPÒ — Team Support section ═══ */}
+        <div className="mb-8 max-w-[500px]">
+          <TeamSupportSection teamId={team.id} />
         </div>
 
         {/* Optional team photo */}

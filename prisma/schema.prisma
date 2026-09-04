@@ -152,6 +152,8 @@ model Team {
   events        MatchEvent[]
   replays       Replay[]
   registrations TeamRegistration[]
+  donations     TeamDonation[]
+  distributions TeamSupportDistribution[]
 }
 
 enum TeamStatus {
@@ -450,6 +452,11 @@ enum LedgerType {
   BET_REFUND
   COMMISSION
   ADJUSTMENT
+  TEAM_DONATION
+  DONATION_REFUND
+  TEAM_DISTRIBUTION
+  PLAYER_ALLOCATION
+  DISTRIBUTION_REVERSAL
 }
 
 // ── Stake pools ──
@@ -668,7 +675,7 @@ model BettingAuditLog {
 // provider's webhook verifies a real payment (see /api/betting/webhooks/[provider]).
 model PaymentIntent {
   id              String   @id @default(cuid())
-  bettorId        String
+  bettorId        String?                    // null for anonymous team donations
   provider        String                    // "moncash" | "natcash" | "demo"
   amountCentimes  BigInt
   currency        String   @default("HTG")
@@ -681,7 +688,7 @@ model PaymentIntent {
   confirmedAt     DateTime?
   rawWebhookPayload String?                  // the verified webhook body (audit)
 
-  bettor          Bettor   @relation(fields: [bettorId], references: [id], onDelete: Cascade)
+  bettor          Bettor?  @relation(fields: [bettorId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerPaymentId])
   @@index([bettorId, status, createdAt])
@@ -730,8 +737,10 @@ model SettlementTransaction {
 //   platform_settlement — clearing account during settlement
 model Account {
   id              String   @id @default(cuid())
-  type            String                     // bettor_available | bettor_reserved | ...
-  bettorId        String?                    // null for platform accounts
+  type            String                     // bettor_available | bettor_reserved | team_support | player_earnings | platform_*
+  bettorId        String?                    // null for non-bettor accounts
+  teamId          String?                    // set for team_support accounts
+  playerId        String?                    // set for player_earnings accounts
   currency        String   @default("HTG")
   balanceCentimes BigInt  @default(0)       // running balance (denormalized)
   createdAt       DateTime @default(now())
@@ -739,9 +748,11 @@ model Account {
 
   entries         AccountEntry[]
 
-  @@unique([type, bettorId])
+  @@unique([type, bettorId, teamId, playerId])
   @@index([type])
   @@index([bettorId])
+  @@index([teamId])
+  @@index([playerId])
 }
 
 // ── AccountEntry — immutable double-entry line (spec P1.1) ────────────
@@ -804,4 +815,132 @@ model RateLimitAudit {
 
   @@index([scope, identifier, createdAt])
   @@index([createdAt])
+}
+
+// ───────── FIFAYITI SIPÒ — Team Support Economy ─────────
+//
+// Fans financially support their favorite team. 0% commission. Money
+// flows into a Team Support Fund (an Account with type="team_support").
+// FIFAYITI administers equal-share distributions to eligible players.
+//
+// ARCHITECTURE: reuses the existing Account/AccountEntry double-entry
+// ledger. Team + player accounts are just Account rows with type set
+// to "team_support" / "player_earnings" and teamId/playerId set.
+// Donations flow through the same PaymentIntent → verified webhook
+// → AccountEntry pipeline as bettor deposits.
+//
+// SEPARATION FROM PARIAJ: the business rules are distinct. A donation
+// is never a betting transaction. A settlement never affects a team
+// fund. The financial backbone (Account/AccountEntry) is shared, but
+// the domain models (TeamDonation, TeamSupportDistribution) are
+// separate from the betting models (BetOrder, BettingMarket).
+
+// ── TeamDonation — a fan's contribution to a team's support fund ──
+// Linked to a PaymentIntent (same payment flow as bettor deposits).
+// NO money is credited until the payment provider's webhook verifies.
+model TeamDonation {
+  id              String   @id @default(cuid())
+  teamId          String
+  team            Team     @relation(fields: [teamId], references: [id])
+  paymentIntentId String   @unique           // the PaymentIntent that funds this donation
+  amountCentimes  BigInt                     // total donated (centimes)
+  currency        String   @default("HTG")
+  status          TeamDonationStatus @default(PENDING)
+  donorBettorId   String?                    // if the donor is a logged-in bettor
+  donorName       String?                    // optional display name
+  anonymous       Boolean  @default(true)
+  message         String?                    // optional support message
+  ledgerTransactionId String?                 // the AccountEntry transactionId (set on confirmation)
+  confirmedAt     DateTime?
+  refundedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([teamId, status, createdAt])
+  @@index([paymentIntentId])
+  @@index([status])
+}
+
+enum TeamDonationStatus {
+  PENDING          // payment intent created, awaiting webhook
+  CONFIRMED        // webhook verified, funds credited to team_support account
+  REFUNDED         // payment failed / reversed, funds returned
+  FAILED           // payment intent expired or failed
+}
+
+// ── TeamSupportDistribution — a batch distribution to eligible players ──
+// Created by PRESIDENT/DIRECTOR (not TEAM_ADMIN). Equal-share principle:
+// every eligible player gets the same amount. Remainder from uneven
+// division is distributed deterministically (first N players get +1
+// centime each, where N = remainder).
+//
+// IDEMPOTENCY: the batchNumber is unique per team. A double-click on
+// "DISTRIBUTE" hits the unique constraint and the second attempt is
+// rejected.
+model TeamSupportDistribution {
+  id              String   @id @default(cuid())
+  teamId          String
+  team            Team     @relation(fields: [teamId], references: [id])
+  batchNumber     Int                       // monotonic per-team (for idempotency)
+  status          TeamDistributionStatus @default(DRAFT)
+  totalAmountCentimes BigInt                 // amount being distributed
+  eligiblePlayerCount Int                    // snapshot count
+  perPlayerAmountCentimes BigInt             // base share (total / count)
+  remainderCentimes BigInt  @default(0)    // leftover (total % count)
+  remainderRecipients Int   @default(0)     // how many players get +1 centime
+  eligibilitySnapshot String                // JSON: [{ playerId, firstName, lastName, jerseyNumber }]
+  ledgerTransactionId String?               // the AccountEntry transactionId (set on execution)
+  createdBy       String                   // admin role/id who created it
+  executedBy      String?                   // admin role/id who executed it
+  createdAt       DateTime @default(now())
+  executedAt      DateTime?
+  completedAt      DateTime?
+  reversedAt       DateTime?
+  reversalTransactionId String?
+  failureReason    String?
+
+  allocations     PlayerAllocation[]
+
+  @@unique([teamId, batchNumber])
+  @@index([teamId, status])
+  @@index([status])
+}
+
+enum TeamDistributionStatus {
+  DRAFT            // created, not yet reviewed
+  PENDING          // reviewed, awaiting execution
+  EXECUTING        // transaction in progress
+  COMPLETED        // all allocations credited, transaction committed
+  FAILED           // execution failed (rolled back)
+  REVERSED         // completed but later reversed
+}
+
+// ── PlayerAllocation — one player's share within a distribution batch ──
+// Child of TeamSupportDistribution. The `amountCentimes` may be
+// `perPlayerAmountCentimes` OR `perPlayerAmountCentimes + 1` (for the
+// first N remainder recipients).
+model PlayerAllocation {
+  id              String   @id @default(cuid())
+  distributionId  String
+  distribution    TeamSupportDistribution @relation(fields: [distributionId], references: [id], onDelete: Cascade)
+  playerId        String
+  playerName      String                     // snapshot (immutable)
+  playerJerseyNumber Int                     // snapshot
+  amountCentimes  BigInt                     // this player's share
+  status          PlayerAllocationStatus @default(PENDING)
+  ledgerTransactionId String?                 // set when credited
+  creditedAt      DateTime?
+  reversedAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  @@unique([distributionId, playerId])
+  @@index([distributionId, status])
+  @@index([playerId])
+}
+
+enum PlayerAllocationStatus {
+  PENDING          // allocation recorded, not yet credited
+  CREDITED         // funds credited to player_earnings account
+  REVERSED         // allocation reversed
+  FAILED           // credit failed
 }
