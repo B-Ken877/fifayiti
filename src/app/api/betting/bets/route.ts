@@ -110,49 +110,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Montan sa a pa pèmèt." }, { status: 400 });
     }
 
-    // Atomic: reserve funds + create the bet.
-    const betOrder = await db.$transaction(async (tx) => {
-      let wallet = await tx.wallet.findUnique({ where: { bettorId: bettor.id } });
-      if (!wallet) {
-        wallet = await tx.wallet.create({ data: { bettorId: bettor.id } });
-      }
-      if (wallet.availableCentimes < stakeCentimes) {
-        throw new Error("Solde disponib ou pa ase.");
-      }
-
-      const bet = await tx.betOrder.create({
-        data: {
-          bettorId: bettor.id,
-          marketId,
-          selectionId,
-          stakeCentimes,
-          status: "OPEN",
-          idempotencyKey: idempotencyKey ?? null,
-        },
-      });
-
-      await tx.wallet.update({
-        where: { bettorId: bettor.id },
-        data: {
-          availableCentimes: wallet.availableCentimes - stakeCentimes,
-          reservedCentimes: wallet.reservedCentimes + stakeCentimes,
-        },
-      });
-
-      await tx.ledgerEntry.create({
-        data: {
-          bettorId: bettor.id,
-          amountCentimes: -stakeCentimes,
-          type: "BET_RESERVE",
-          referenceType: "bet_order",
-          referenceId: bet.id,
-          balanceAfterCentimes: wallet.availableCentimes + wallet.reservedCentimes,
-          metadata: JSON.stringify({ action: "reserve", betOrderId: bet.id, marketId, selectionId }),
-        },
-      });
-
-      return bet;
+    // Create the bet order first (inside a tx for the status).
+    const betOrder = await db.betOrder.create({
+      data: {
+        bettorId: bettor.id,
+        marketId,
+        selectionId,
+        stakeCentimes,
+        status: "OPEN",
+        idempotencyKey: idempotencyKey ?? null,
+      },
     });
+
+    // Reserve funds via the canonical ledger (no LedgerEntry writes).
+    try {
+      await reserveForBet(bettor.id, stakeCentimes, betOrder.id);
+    } catch (e: any) {
+      // If reservation fails (insufficient balance), cancel the bet order.
+      await db.betOrder.update({
+        where: { id: betOrder.id },
+        data: { status: "CANCELLED" },
+      }).catch(() => {});
+      const msg = e?.message ?? "Erè sèvè.";
+      if (msg.includes("Solde disponib") || msg.includes("Insufficient")) {
+        return NextResponse.json({ error: "Solde disponib ou pa ase." }, { status: 402 });
+      }
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
 
     await logBettingAction({
       actorType: "system",

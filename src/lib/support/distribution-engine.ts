@@ -1,27 +1,25 @@
-// FIFAYITI SIPÒ — Distribution engine.
+// FIFAYITI SIPÒ — Distribution engine (canonical ledger edition).
 //
 // FIFAYITI (not coaches) distributes the team's support pool equally
-// among eligible players. The distribution is:
-//   - ATOMIC: either all player allocations succeed or nothing changes
-//   - IDEMPOTENT: batchNumber is unique per team (double-click rejected)
-//   - IMMUTABLE: the eligibility snapshot is frozen at creation time
-//   - DETERMINISTIC: remainder is distributed to the first N players
-//     (each gets +1 centime), where N = totalAmount % playerCount
+// among eligible players. Uses the canonical postFinancialTransaction to
+// create ONE balanced FinancialTransaction with:
+//   DEBIT  team_support (the full pool)
+//   CREDIT player_earnings[0..N] (each player's share)
 //
-// ELIGIBILITY: players with status = "VERIFYE" on the team. The snapshot
-// is a JSON array stored on the distribution record so historical
-// distributions can't silently change when the roster changes.
+// All entries share the same FinancialTransaction ID. Σ debits == Σ credits.
 
 import { db } from "@/lib/db";
-import { randomUUID } from "crypto";
+import { createHash } from "crypto";
+import { postFinancialTransaction } from "@/lib/finance/ledger";
 import {
   getOrCreateTeamAccount,
   getOrCreatePlayerAccount,
-  getOrCreateCustodyAccount,
-  postDoubleEntry,
-} from "./accounts";
+} from "@/lib/support/accounts";
 
-/** Get the eligible players for a team (status = VERIFYE). */
+function fingerprint(parts: string[]): string {
+  return createHash("sha256").update(parts.join("|")).digest("hex");
+}
+
 export async function getEligiblePlayers(teamId: string) {
   return db.player.findMany({
     where: { teamId, status: "VERIFYE" },
@@ -30,15 +28,6 @@ export async function getEligiblePlayers(teamId: string) {
   });
 }
 
-/**
- * Create a distribution batch (DRAFT status).
- *
- * Snapshots the eligible players + calculates equal shares + remainder.
- * Does NOT move any money. The admin must review + execute separately.
- *
- * IDEMPOTENCY: batchNumber is monotonic per team. A double-submit hits
- * the @@unique([teamId, batchNumber]) constraint.
- */
 export async function createDistribution(opts: {
   teamId: string;
   createdBy: string;
@@ -52,7 +41,6 @@ export async function createDistribution(opts: {
   remainder?: string;
   reason?: string;
 }> {
-  // Get the team's support fund balance.
   const teamAccount = await getOrCreateTeamAccount(opts.teamId);
   const fundBalance = teamAccount.balanceCentimes;
 
@@ -60,19 +48,15 @@ export async function createDistribution(opts: {
     return { ok: false, reason: "Pa gen lajan nan fon sipò a." };
   }
 
-  // Get eligible players.
   const eligible = await getEligiblePlayers(opts.teamId);
   if (eligible.length === 0) {
     return { ok: false, reason: "Pa gen jwè ki kalifye pou distribisyon." };
   }
 
-  // Calculate equal shares + deterministic remainder.
   const perPlayer = fundBalance / BigInt(eligible.length);
   const remainder = fundBalance % BigInt(eligible.length);
-  // First N players (by jerseyNumber) get +1 centime.
   const remainderRecipients = Number(remainder);
 
-  // Create the distribution record (DRAFT) with the eligibility snapshot.
   const snapshot = eligible.map((p) => ({
     playerId: p.id,
     firstName: p.firstName,
@@ -80,12 +64,7 @@ export async function createDistribution(opts: {
     jerseyNumber: p.jerseyNumber,
   }));
 
-  // ── P0 #4 + P0 #5: ATOMIC CREATION + STALE GUARD ───────────────────
-  // Distribution + ALL PlayerAllocation rows + the P0 #5 stale-distribution
-  // guard (only one non-terminal per team) all happen inside ONE transaction.
-  // If the guard fails or any allocation fails, the whole thing rolls back.
   const distribution = await db.$transaction(async (tx) => {
-    // P0 #5: Check for existing non-terminal distributions INSIDE the tx.
     const existing = await tx.teamSupportDistribution.count({
       where: {
         teamId: opts.teamId,
@@ -96,7 +75,6 @@ export async function createDistribution(opts: {
       throw new Error("Gen yon distribisyon ki poko fini pou ekip sa a.");
     }
 
-    // Compute batch number inside the tx (avoids race on the lastBatch read).
     const lastBatch = await tx.teamSupportDistribution.findFirst({
       where: { teamId: opts.teamId },
       orderBy: { batchNumber: "desc" },
@@ -119,7 +97,6 @@ export async function createDistribution(opts: {
       },
     });
 
-    // Create all player allocations inside the same transaction.
     for (let i = 0; i < eligible.length; i++) {
       const player = eligible[i];
       const amount = perPlayer + (i < remainderRecipients ? 1n : 0n);
@@ -135,7 +112,7 @@ export async function createDistribution(opts: {
     }
 
     return dist;
-  }).catch(() => null); // returns null on guard failure (P0 #5) or other error
+  }).catch(() => null);
 
   if (!distribution) {
     return { ok: false, reason: "Gen yon distribisyon ki poko fini pou ekip sa a." };
@@ -152,131 +129,90 @@ export async function createDistribution(opts: {
   };
 }
 
-/**
- * Execute a distribution — atomically credit all player accounts.
- *
- * Either ALL allocations succeed or nothing changes (Prisma transaction).
- * The distribution's status transitions: DRAFT → EXECUTING → COMPLETED.
- *
- * IDEMPOTENT: if the distribution is already COMPLETED, returns without
- * re-crediting.
- */
 export async function executeDistribution(
   distributionId: string,
   executedBy: string,
 ): Promise<{ ok: boolean; reason?: string }> {
-  // Pre-check: if not found or already COMPLETED, return early.
-  // The atomic state transition inside the tx handles the race.
   const distribution = await db.teamSupportDistribution.findUnique({
     where: { id: distributionId },
     select: { status: true },
   });
   if (!distribution) return { ok: false, reason: "distribution not found" };
-  if (distribution.status === "COMPLETED") return { ok: true }; // idempotent
+  if (distribution.status === "COMPLETED") return { ok: true };
 
   try {
     return await db.$transaction(async (tx) => {
-      // ── P0 #3: ATOMIC STATE TRANSITION ───────────────────────────────
-      // Use updateMany with a WHERE clause that only matches DRAFT/PENDING.
-      // If 0 rows are affected, another request won the race.
       const transition = await tx.teamSupportDistribution.updateMany({
         where: { id: distributionId, status: { in: ["DRAFT", "PENDING"] } },
         data: { status: "EXECUTING", executedBy, executedAt: new Date() },
       });
       if (transition.count === 0) {
-        // Either already COMPLETED (idempotent), already EXECUTING (race loser),
-        // or FAILED. Return idempotent/already-processing.
         const current = await tx.teamSupportDistribution.findUnique({
           where: { id: distributionId },
           select: { status: true },
         });
-        if (current?.status === "COMPLETED") return { ok: true }; // idempotent
+        if (current?.status === "COMPLETED") return { ok: true };
         return { ok: false, reason: `distribution is ${current?.status ?? "unknown"}` };
       }
 
-      // Re-read inside the tx to get allocations.
       const dist = await tx.teamSupportDistribution.findUnique({
         where: { id: distributionId },
         include: { allocations: true },
       });
       if (!dist) throw new Error("distribution not found after transition");
 
-      // Get the team account.
-      const teamAccount = await tx.account.findFirst({
-        where: { type: "team_support", teamId: dist.teamId },
-      });
-      if (!teamAccount) throw new Error("team account not found");
-
-      // Verify the team fund has enough.
+      // Verify team fund has enough (inside the tx).
+      const teamAccount = await getOrCreateTeamAccount(dist.teamId);
       if (teamAccount.balanceCentimes < dist.totalAmountCentimes) {
         throw new Error("Insufficient team fund for distribution.");
       }
 
-      // ── P0 #2: ONE BALANCED TRANSACTION ──────────────────────────────
-      // All entries (1 debit + N credits) share the SAME transactionId.
-      // Σ debits == Σ credits.
-      const txnId = randomUUID();
+      // Build the entries for the canonical financial transaction.
+      const entries: { accountId: string; direction: "debit" | "credit"; amountCentimes: bigint }[] = [
+        { accountId: teamAccount.id, direction: "debit", amountCentimes: dist.totalAmountCentimes },
+      ];
 
-      // Debit team_support (decrease — funds leaving the team pool).
-      await tx.account.update({
-        where: { id: teamAccount.id },
-        data: { balanceCentimes: teamAccount.balanceCentimes - dist.totalAmountCentimes },
-      });
-      await tx.accountEntry.create({
-        data: {
-          transactionId: txnId,
-          accountId: teamAccount.id,
-          direction: "debit",
-          amountCentimes: dist.totalAmountCentimes,
-          ledgerType: "TEAM_DISTRIBUTION",
-          referenceType: "team_support_distribution",
-          referenceId: distributionId,
-          metadata: JSON.stringify({
-            teamId: dist.teamId,
-            batchNumber: dist.batchNumber,
-            playerCount: dist.eligiblePlayerCount,
-          }),
-        },
-      });
-
-      // Credit each player's earnings account — SAME transactionId.
       for (const allocation of dist.allocations) {
-        let playerAccount = await tx.account.findFirst({
-          where: { type: "player_earnings", playerId: allocation.playerId },
+        const playerAccount = await getOrCreatePlayerAccount(allocation.playerId);
+        entries.push({
+          accountId: playerAccount.id,
+          direction: "credit",
+          amountCentimes: allocation.amountCentimes,
         });
-        if (!playerAccount) {
-          playerAccount = await tx.account.create({
-            data: { type: "player_earnings", playerId: allocation.playerId, currency: "HTG" },
-          });
-        }
+      }
 
-        await tx.account.update({
-          where: { id: playerAccount.id },
-          data: { balanceCentimes: playerAccount.balanceCentimes + allocation.amountCentimes },
-        });
-        await tx.accountEntry.create({
-          data: {
-            transactionId: txnId,
-            accountId: playerAccount.id,
-            direction: "credit",
-            amountCentimes: allocation.amountCentimes,
-            ledgerType: "PLAYER_ALLOCATION",
-            referenceType: "player_allocation",
-            referenceId: allocation.id,
-            metadata: JSON.stringify({
-              distributionId,
-              playerId: allocation.playerId,
-              playerName: allocation.playerName,
-            }),
-          },
-        });
+      // Post the financial transaction using the canonical ledger.
+      // This creates the FinancialTransaction + AccountEntry rows + updates Account balances.
+      const result = await postFinancialTransaction({
+        idempotencyKey: `team_distribution:${dist.id}`,
+        requestFingerprint: fingerprint([
+          "TEAM_DISTRIBUTION",
+          dist.id,
+          dist.teamId,
+          dist.totalAmountCentimes.toString(),
+          dist.eligiblePlayerCount.toString(),
+          ...dist.allocations.map((a: any) => `${a.playerId}:${a.amountCentimes.toString()}`),
+        ]),
+        type: "TEAM_DISTRIBUTION",
+        referenceType: "team_support_distribution",
+        referenceId: distributionId,
+        metadata: JSON.stringify({
+          teamId: dist.teamId,
+          batchNumber: dist.batchNumber,
+          playerCount: dist.eligiblePlayerCount,
+          totalAmount: dist.totalAmountCentimes.toString(),
+        }),
+        createdBy: executedBy,
+        entries,
+      });
 
-        // Mark the allocation as credited (SAME transactionId).
+      // Mark all allocations as credited.
+      for (const allocation of dist.allocations) {
         await tx.playerAllocation.update({
           where: { id: allocation.id },
           data: {
             status: "CREDITED",
-            ledgerTransactionId: txnId,
+            ledgerTransactionId: result.transactionId,
             creditedAt: new Date(),
           },
         });
@@ -287,7 +223,7 @@ export async function executeDistribution(
         where: { id: distributionId },
         data: {
           status: "COMPLETED",
-          ledgerTransactionId: txnId,
+          ledgerTransactionId: result.transactionId,
           completedAt: new Date(),
         },
       });
@@ -295,10 +231,6 @@ export async function executeDistribution(
       return { ok: true };
     });
   } catch (e: any) {
-    // ── P1 #9: FAILED stays FAILED (no roll back to DRAFT) ────────────
-    // The transaction rolled back the financial entries. The distribution
-    // stays in EXECUTING → transition to FAILED with the failure reason.
-    // FAILED distributions are auditable + cannot be re-executed.
     await db.teamSupportDistribution.updateMany({
       where: { id: distributionId, status: "EXECUTING" },
       data: { status: "FAILED", failureReason: e?.message },
@@ -307,9 +239,6 @@ export async function executeDistribution(
   }
 }
 
-/**
- * Get the distribution history for a team.
- */
 export async function getDistributionHistory(teamId: string) {
   return db.teamSupportDistribution.findMany({
     where: { teamId },

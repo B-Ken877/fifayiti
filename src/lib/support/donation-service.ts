@@ -1,31 +1,25 @@
-// FIFAYITI SIPÒ — Donation service.
+// FIFAYITI SIPÒ — Donation service (canonical ledger edition).
 //
 // Fans initiate a donation → PaymentIntent is created (PENDING) →
 // provider verifies via webhook → TeamDonation is confirmed + the
-// team's support fund is credited via a balanced AccountEntry.
-//
-// NO money is credited until the webhook verifies. The client never
-// directly creates a successful donation.
+// team's support fund is credited via the canonical FinancialTransaction.
 //
 // 0% FIFAYITI commission — 100% goes to the team.
+// NO money is credited until the webhook verifies.
 
 import { db } from "@/lib/db";
 import { getProvider } from "@/lib/payment";
-import { randomUUID } from "crypto";
+import { createHash } from "crypto";
+import { postFinancialTransaction } from "@/lib/finance/ledger";
 import {
   getOrCreateTeamAccount,
   getOrCreateCustodyAccount,
-  postDoubleEntry,
-} from "./accounts";
+} from "@/lib/support/accounts";
 
-/**
- * Initiate a team support donation.
- *
- * Creates a PaymentIntent (pending) + a TeamDonation record (pending).
- * No money is moved. The webhook will confirm + credit the team fund.
- *
- * @returns the donation id + payment intent id (+ redirect URL if real provider)
- */
+function fingerprint(parts: string[]): string {
+  return createHash("sha256").update(parts.join("|")).digest("hex");
+}
+
 export async function initiateDonation(opts: {
   teamId: string;
   amountCentimes: bigint;
@@ -42,7 +36,6 @@ export async function initiateDonation(opts: {
   redirectUrl?: string;
   error?: string;
 }> {
-  // Validate the team exists.
   const team = await db.team.findUnique({ where: { id: opts.teamId } });
   if (!team) return { ok: false, error: "Ekip sa a pa egziste." };
 
@@ -50,7 +43,6 @@ export async function initiateDonation(opts: {
     return { ok: false, error: "Montan pa valid." };
   }
 
-  // Create the PaymentIntent (same model as bettor deposits).
   const intent = await db.paymentIntent.create({
     data: {
       bettorId: opts.donorBettorId ?? null,
@@ -61,7 +53,6 @@ export async function initiateDonation(opts: {
     },
   });
 
-  // Create the TeamDonation record (pending).
   const donation = await db.teamDonation.create({
     data: {
       teamId: opts.teamId,
@@ -74,7 +65,6 @@ export async function initiateDonation(opts: {
     },
   });
 
-  // Ask the provider for a deposit intent (redirect URL).
   const provider = getProvider(opts.provider);
   let depositIntent;
   try {
@@ -96,7 +86,6 @@ export async function initiateDonation(opts: {
     return { ok: false, error: e?.message ?? "Pwovèdè peyman pa disponib." };
   }
 
-  // Demo flow (dev only): simulate immediate webhook.
   if (opts.provider === "demo" && process.env.NODE_ENV !== "production") {
     try {
       await fetch(`${opts.returnUrl.includes("vercel") ? "" : "http://localhost:3000"}/api/support/webhooks/demo`, {
@@ -118,126 +107,63 @@ export async function initiateDonation(opts: {
 
 /**
  * Confirm a donation after the payment provider's webhook verifies.
+ * Uses the canonical postFinancialTransaction to create a balanced double-entry.
  *
- * Atomically:
- *   1. Marks the PaymentIntent as "paid"
- *   2. Marks the TeamDonation as "CONFIRMED"
- *   3. Posts a balanced double-entry: debit platform_custody, credit team_support
- *
- * IDEMPOTENT: if the donation is already CONFIRMED, returns without
- * re-crediting.
+ * IDEMPOTENT: if the donation is already CONFIRMED, returns without re-crediting.
  */
 export async function confirmDonation(
   intentId: string,
   providerPaymentId: string,
 ): Promise<{ ok: boolean; reason?: string }> {
   return db.$transaction(async (tx) => {
-    const intent = await tx.paymentIntent.findUnique({
-      where: { id: intentId },
-    });
+    const intent = await tx.paymentIntent.findUnique({ where: { id: intentId } });
     if (!intent) return { ok: false, reason: "intent not found" };
-    if (intent.status === "paid") return { ok: true }; // idempotent
+    if (intent.status === "paid") return { ok: true };
 
-    const donation = await tx.teamDonation.findUnique({
-      where: { paymentIntentId: intentId },
-    });
+    const donation = await tx.teamDonation.findUnique({ where: { paymentIntentId: intentId } });
     if (!donation) return { ok: false, reason: "donation not found" };
-    if (donation.status === "CONFIRMED") return { ok: true }; // idempotent
+    if (donation.status === "CONFIRMED") return { ok: true };
 
-    // Mark the intent as paid.
     await tx.paymentIntent.update({
       where: { id: intent.id },
-      data: {
-        status: "paid",
-        providerPaymentId,
-        confirmedAt: new Date(),
-      },
+      data: { status: "paid", providerPaymentId, confirmedAt: new Date() },
     });
 
-    // Get or create custody + team accounts INSIDE the transaction.
-    let custodyAccount = await tx.account.findFirst({
-      where: { type: "platform_custody", bettorId: null, teamId: null, playerId: null },
-    });
-    if (!custodyAccount) {
-      custodyAccount = await tx.account.create({
-        data: { type: "platform_custody", currency: "HTG" },
-      });
-    }
-
-    let teamAccount = await tx.account.findFirst({
-      where: { type: "team_support", teamId: donation.teamId },
-    });
-    if (!teamAccount) {
-      teamAccount = await tx.account.create({
-        data: { type: "team_support", teamId: donation.teamId, currency: "HTG" },
-      });
-    }
-
-    // ── P0 #1: TRUE DOUBLE-ENTRY ──────────────────────────────────────
-    // The real-world payment is external, but internally FIFAYITI must
-    // represent custody + ownership. Two AccountEntry rows, ONE transactionId.
-    //
-    //   DEBIT  platform_custody   (custody receives the external funds)
-    //   CREDIT team_support       (ownership transferred to the team fund)
-    //
-    // Both accounts increase. Σ debits == Σ credits.
-    const txnId = randomUUID();
-    const amount = donation.amountCentimes;
-
-    // Debit platform_custody (increase — custody holds the external inflow).
-    await tx.account.update({
-      where: { id: custodyAccount.id },
-      data: { balanceCentimes: custodyAccount.balanceCentimes + amount },
-    });
-    await tx.accountEntry.create({
-      data: {
-        transactionId: txnId,
-        accountId: custodyAccount.id,
-        direction: "debit",
-        amountCentimes: amount,
-        ledgerType: "TEAM_DONATION",
-        referenceType: "team_donation",
-        referenceId: donation.id,
-        metadata: JSON.stringify({ teamId: donation.teamId, amount: amount.toString() }),
-      },
-    });
-
-    // Credit team_support (increase — team owns the funds).
-    await tx.account.update({
-      where: { id: teamAccount.id },
-      data: { balanceCentimes: teamAccount.balanceCentimes + amount },
-    });
-    await tx.accountEntry.create({
-      data: {
-        transactionId: txnId,
-        accountId: teamAccount.id,
-        direction: "credit",
-        amountCentimes: amount,
-        ledgerType: "TEAM_DONATION",
-        referenceType: "team_donation",
-        referenceId: donation.id,
-        metadata: JSON.stringify({ teamId: donation.teamId, amount: amount.toString() }),
-      },
-    });
-
-    // Mark the donation as confirmed.
+    // Use the canonical ledger service (outside the Prisma tx — it manages its own tx).
+    // We mark the donation as confirmed first; the financial transaction is posted next.
     await tx.teamDonation.update({
       where: { id: donation.id },
-      data: {
-        status: "CONFIRMED",
-        confirmedAt: new Date(),
-        ledgerTransactionId: txnId,
-      },
+      data: { status: "CONFIRMED", confirmedAt: new Date() },
+    });
+
+    // Post the financial transaction using the canonical ledger.
+    // This happens OUTSIDE the Prisma tx — the idempotency key prevents duplicates.
+    const custodyAcct = await getOrCreateCustodyAccount();
+    const teamAcct = await getOrCreateTeamAccount(donation.teamId);
+
+    const result = await postFinancialTransaction({
+      idempotencyKey: `team_donation:${donation.id}`,
+      requestFingerprint: fingerprint(["TEAM_DONATION", donation.id, donation.amountCentimes.toString(), donation.teamId]),
+      type: "TEAM_DONATION",
+      referenceType: "team_donation",
+      referenceId: donation.id,
+      metadata: JSON.stringify({ teamId: donation.teamId, amount: donation.amountCentimes.toString() }),
+      createdBy: "system",
+      entries: [
+        { accountId: custodyAcct.id, direction: "debit", amountCentimes: donation.amountCentimes },
+        { accountId: teamAcct.id, direction: "credit", amountCentimes: donation.amountCentimes },
+      ],
+    });
+
+    await tx.teamDonation.update({
+      where: { id: donation.id },
+      data: { ledgerTransactionId: result.transactionId },
     });
 
     return { ok: true };
   });
 }
 
-/**
- * Get public support stats for a team.
- * Returns total support, supporter count, and recent donations (anonymous).
- */
 export async function getTeamSupportStats(teamId: string) {
   const donations = await db.teamDonation.findMany({
     where: { teamId, status: "CONFIRMED" },

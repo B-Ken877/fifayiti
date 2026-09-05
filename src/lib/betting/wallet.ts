@@ -1,27 +1,24 @@
-// FIFAYITI PARIAJ — Wallet + Ledger (double-entry, atomic, concurrency-safe).
+// FIFAYITI PARIAJ — Wallet service (canonical ledger edition).
 //
-// ARCHITECTURE:
-//   Every money movement is a ledger entry (immutable) + a wallet balance
-//   update (denormalized). Both happen inside a single Prisma transaction
-//   so the wallet never drifts from the ledger.
+// ARCHITECTURE CHANGE: This module no longer writes to LedgerEntry.
+// All financial movements go through the canonical FinancialTransaction +
+// AccountEntry ledger via postFinancialTransaction(). Wallet remains as a
+// read-only projection (synced from Account balances) for UI compatibility.
 //
-//   Wallet.available  — spendable now
-//   Wallet.reserved    — locked in open (unmatched) bets
-//   (Matched funds are removed from reserved — they're "in play" and
-//    tracked by the BetOrder, not the wallet.)
-//
-// CONCURRENCY:
-//   Prisma transactions on SQLite are SERIALIZABLE (SQLite uses locking).
-//   For high-concurrency production, Postgres with SELECT FOR UPDATE on the
-//   wallet row is recommended. The code below uses a re-read pattern inside
-//   the transaction to catch race conditions (optimistic concurrency).
-//
-// ⚠️ Vercel note: each lambda gets a fresh DB copy. Wallet writes within a
-//   single transaction succeed, but cross-lambda persistence requires
-//   Postgres. The code is correct; the backend is what needs upgrading.
+// Account mapping:
+//   bettor_available → Account(type="bettor_available", bettorId)
+//   bettor_reserved  → Account(type="bettor_reserved", bettorId)
+//   platform_custody → Account(type="platform_custody")
 
 import { db } from "@/lib/db";
-import type { LedgerType } from "@prisma/client";
+import { postFinancialTransaction } from "@/lib/finance/ledger";
+import {
+  getOrCreateBettorAvailableAccount,
+  getOrCreateBettorReservedAccount,
+  getOrCreateCustodyAccount,
+  getOrCreateRevenueAccount,
+} from "@/lib/support/accounts";
+import { createHash } from "crypto";
 
 export interface WalletSnapshot {
   availableCentimes: bigint;
@@ -36,7 +33,6 @@ export async function getWallet(bettorId: string) {
     try {
       wallet = await db.wallet.create({ data: { bettorId } });
     } catch {
-      // Race: another request created it — re-read.
       wallet = await db.wallet.findUnique({ where: { bettorId } });
     }
   }
@@ -44,75 +40,80 @@ export async function getWallet(bettorId: string) {
 }
 
 /**
- * Atomically: write a ledger entry + update the wallet balance.
- *
- * All money movements go through this function — never update the wallet
- * directly. The ledger entry and wallet update are inside a single Prisma
- * transaction, so the wallet can never drift from the ledger.
- *
- * @param bettorId    the bettor whose wallet is affected
- * @param amount      +credit / -debit in centimes (BigInt)
- * @param type        ledger entry type
- * @param refType     reference entity type (e.g. "bet_order")
- * @param refId       reference entity id
- * @param availableDelta  change to wallet.available (positive = add)
- * @param reservedDelta   change to wallet.reserved (positive = add)
- * @param metadata    extra context (JSON string)
+ * Sync the Wallet projection from the canonical Account balances.
+ * Called after every financial operation that affects bettor accounts.
  */
-export async function ledgerEntry(
-  bettorId: string,
-  amount: bigint,
-  type: LedgerType,
-  opts: {
-    refType?: string;
-    refId?: string;
-    availableDelta: bigint;  // +add / -subtract from available
-    reservedDelta?: bigint;   // +add / -subtract from reserved
-    metadata?: string;
-  },
-) {
-  return db.$transaction(async (tx) => {
-    // Re-read the wallet inside the transaction (optimistic concurrency).
-    let wallet = await tx.wallet.findUnique({ where: { bettorId } });
-    if (!wallet) {
-      wallet = await tx.wallet.create({ data: { bettorId } });
-    }
-
-    const newAvailable = wallet.availableCentimes + opts.availableDelta;
-    const newReserved = wallet.reservedCentimes + (opts.reservedDelta ?? 0n);
-
-    // Guard: balances can never go negative.
-    if (newAvailable < 0n) {
-      throw new Error("Solde disponib ou pa ase.");
-    }
-    if (newReserved < 0n) {
-      throw new Error("Erè nan rezèv lajan — rezève negatif.");
-    }
-
-    const updated = await tx.wallet.update({
-      where: { bettorId },
-      data: {
-        availableCentimes: newAvailable,
-        reservedCentimes: newReserved,
-      },
-    });
-
-    const balanceAfter = updated.availableCentimes + updated.reservedCentimes;
-
-    await tx.ledgerEntry.create({
-      data: {
-        bettorId,
-        amountCentimes: amount,
-        type,
-        referenceType: opts.refType ?? null,
-        referenceId: opts.refId ?? null,
-        balanceAfterCentimes: balanceAfter,
-        metadata: opts.metadata ?? null,
-      },
-    });
-
-    return updated;
+async function syncWalletFromAccounts(bettorId: string, tx?: any) {
+  const client = tx ?? db;
+  const available = await getOrCreateBettorAvailableAccount(bettorId);
+  const reserved = await getOrCreateBettorReservedAccount(bettorId);
+  await client.wallet.upsert({
+    where: { bettorId },
+    update: {
+      availableCentimes: available.balanceCentimes,
+      reservedCentimes: reserved.balanceCentimes,
+    },
+    create: {
+      bettorId,
+      availableCentimes: available.balanceCentimes,
+      reservedCentimes: reserved.balanceCentimes,
+    },
   });
+}
+
+function fingerprint(parts: string[]): string {
+  return createHash("sha256").update(parts.join("|")).digest("hex");
+}
+
+/**
+ * Deposit funds — credits bettor_available + platform_custody.
+ * Uses the canonical financial ledger.
+ */
+export async function deposit(bettorId: string, amountCentimes: bigint, referenceId?: string) {
+  const bettorAcct = await getOrCreateBettorAvailableAccount(bettorId);
+  const custodyAcct = await getOrCreateCustodyAccount();
+
+  const result = await postFinancialTransaction({
+    idempotencyKey: `deposit:${bettorId}:${referenceId ?? amountCentimes.toString()}`,
+    requestFingerprint: fingerprint(["DEPOSIT", btorIdSafe(bettorId), amountCentimes.toString(), referenceId ?? ""]),
+    type: "DEPOSIT",
+    referenceType: "payment_intent",
+    referenceId: referenceId ?? null,
+    metadata: JSON.stringify({ action: "deposit", bettorId, amount: amountCentimes.toString() }),
+    createdBy: "system",
+    entries: [
+      { accountId: custodyAcct.id, direction: "debit", amountCentimes },
+      { accountId: bettorAcct.id, direction: "credit", amountCentimes },
+    ],
+  });
+
+  await syncWalletFromAccounts(bettorId);
+  return result;
+}
+
+/**
+ * Withdraw funds — debits bettor_available + credits platform_custody.
+ */
+export async function withdraw(bettorId: string, amountCentimes: bigint, referenceId?: string) {
+  const bettorAcct = await getOrCreateBettorAvailableAccount(bettorId);
+  const custodyAcct = await getOrCreateCustodyAccount();
+
+  const result = await postFinancialTransaction({
+    idempotencyKey: `withdraw:${bettorId}:${referenceId ?? amountCentimes.toString()}`,
+    requestFingerprint: fingerprint(["WITHDRAWAL", btorIdSafe(bettorId), amountCentimes.toString(), referenceId ?? ""]),
+    type: "WITHDRAWAL",
+    referenceType: "withdrawal",
+    referenceId: referenceId ?? null,
+    metadata: JSON.stringify({ action: "withdrawal", bettorId, amount: amountCentimes.toString() }),
+    createdBy: "system",
+    entries: [
+      { accountId: bettorAcct.id, direction: "debit", amountCentimes },
+      { accountId: custodyAcct.id, direction: "credit", amountCentimes },
+    ],
+  });
+
+  await syncWalletFromAccounts(bettorId);
+  return result;
 }
 
 /**
@@ -120,45 +121,84 @@ export async function ledgerEntry(
  * Throws if insufficient balance.
  */
 export async function reserveForBet(bettorId: string, stakeCentimes: bigint, betOrderId: string) {
-  return ledgerEntry(bettorId, -stakeCentimes, "BET_RESERVE", {
-    refType: "bet_order",
-    refId: betOrderId,
-    availableDelta: -stakeCentimes,
-    reservedDelta: stakeCentimes,
-    metadata: JSON.stringify({ action: "reserve", betOrderId }),
+  const availableAcct = await getOrCreateBettorAvailableAccount(bettorId);
+  const reservedAcct = await getOrCreateBettorReservedAccount(bettorId);
+
+  const result = await postFinancialTransaction({
+    idempotencyKey: `bet_reserve:${betOrderId}`,
+    requestFingerprint: fingerprint(["BET_RESERVE", betOrderId, stakeCentimes.toString()]),
+    type: "BET_RESERVE",
+    referenceType: "bet_order",
+    referenceId: betOrderId,
+    metadata: JSON.stringify({ action: "reserve", betOrderId, bettorId, stake: stakeCentimes.toString() }),
+    createdBy: "system",
+    entries: [
+      { accountId: availableAcct.id, direction: "debit", amountCentimes: stakeCentimes },
+      { accountId: reservedAcct.id, direction: "credit", amountCentimes: stakeCentimes },
+    ],
   });
+
+  await syncWalletFromAccounts(bettorId);
+  return result;
 }
 
 /**
  * Release reserved funds back to available (bet cancelled while unmatched).
  */
 export async function releaseFromBet(bettorId: string, stakeCentimes: bigint, betOrderId: string) {
-  return ledgerEntry(bettorId, stakeCentimes, "BET_RELEASE", {
-    refType: "bet_order",
-    refId: betOrderId,
-    availableDelta: stakeCentimes,
-    reservedDelta: -stakeCentimes,
-    metadata: JSON.stringify({ action: "release", betOrderId }),
+  const availableAcct = await getOrCreateBettorAvailableAccount(bettorId);
+  const reservedAcct = await getOrCreateBettorReservedAccount(bettorId);
+
+  const result = await postFinancialTransaction({
+    idempotencyKey: `bet_release:${betOrderId}`,
+    requestFingerprint: fingerprint(["BET_RELEASE", betOrderId, stakeCentimes.toString()]),
+    type: "BET_RELEASE",
+    referenceType: "bet_order",
+    referenceId: betOrderId,
+    metadata: JSON.stringify({ action: "release", betOrderId, bettorId, stake: stakeCentimes.toString() }),
+    createdBy: "system",
+    entries: [
+      { accountId: reservedAcct.id, direction: "debit", amountCentimes: stakeCentimes },
+      { accountId: availableAcct.id, direction: "credit", amountCentimes: stakeCentimes },
+    ],
   });
+
+  await syncWalletFromAccounts(bettorId);
+  return result;
 }
 
 /**
- * Move matched funds from reserved → in-play (removed from wallet entirely).
- * The BetOrder row tracks the in-play amount.
+ * Move matched funds from reserved → custody (the pot is held by the platform).
  */
 export async function matchBetFunds(bettorId: string, stakeCentimes: bigint, betOrderId: string) {
-  return ledgerEntry(bettorId, -stakeCentimes, "BET_MATCH", {
-    refType: "bet_order",
-    refId: betOrderId,
-    availableDelta: 0n,
-    reservedDelta: -stakeCentimes,
-    metadata: JSON.stringify({ action: "match", betOrderId }),
+  const reservedAcct = await getOrCreateBettorReservedAccount(bettorId);
+  const custodyAcct = await getOrCreateCustodyAccount();
+
+  const result = await postFinancialTransaction({
+    idempotencyKey: `bet_match:${betOrderId}`,
+    requestFingerprint: fingerprint(["BET_MATCH", betOrderId, stakeCentimes.toString()]),
+    type: "BET_MATCH",
+    referenceType: "bet_order",
+    referenceId: betOrderId,
+    metadata: JSON.stringify({ action: "match", betOrderId, bettorId, stake: stakeCentimes.toString() }),
+    createdBy: "system",
+    entries: [
+      { accountId: reservedAcct.id, direction: "debit", amountCentimes: stakeCentimes },
+      { accountId: custodyAcct.id, direction: "credit", amountCentimes: stakeCentimes },
+    ],
   });
+
+  await syncWalletFromAccounts(bettorId);
+  return result;
 }
 
 /**
  * Settle a winning bet: return the stake + winnings (minus commission).
  * The pot = winnerStake + loserStake. Winner gets pot - commission.
+ * Commission goes to platform_revenue.
+ *
+ * Settlement amounts are DERIVED from actual matched orders — never trusted
+ * from client input. The caller must pass values derived from the DB.
  */
 export async function settleWin(
   bettorId: string,
@@ -168,13 +208,38 @@ export async function settleWin(
   betOrderId: string,
   marketId: string,
 ) {
-  // Net credit = stake (returned) + winnings - commission
-  const netCredit = stakeCentimes + winningsCentimes - commissionCentimes;
-  return ledgerEntry(bettorId, netCredit, "BET_SETTLE_WIN", {
-    refType: "bet_order",
-    refId: betOrderId,
-    availableDelta: netCredit,
-    reservedDelta: 0n,
+  // Net payout = stake + winnings - commission
+  const netPayout = stakeCentimes + winningsCentimes - commissionCentimes;
+
+  if (netPayout <= 0n) {
+    throw new Error("Net payout must be positive");
+  }
+
+  const custodyAcct = await getOrCreateCustodyAccount();
+  const bettorAcct = await getOrCreateBettorAvailableAccount(bettorId);
+
+  const entries = [
+    // Debit custody: release the pot to the winner
+    { accountId: custodyAcct.id, direction: "debit", amountCentimes: netPayout },
+    // Credit bettor available: winner receives net payout
+    { accountId: bettorAcct.id, direction: "credit", amountCentimes: netPayout },
+  ];
+
+  // If there's commission, it goes to platform_revenue as a separate credit
+  if (commissionCentimes > 0n) {
+    const revenueAcct = await getOrCreateRevenueAccount();
+    // Debit custody for the commission portion too (total debit = netPayout + commission = stake + winnings)
+    entries[0].amountCentimes = netPayout + commissionCentimes;
+    // Credit revenue for the commission
+    entries.push({ accountId: revenueAcct.id, direction: "credit", amountCentimes: commissionCentimes });
+  }
+
+  const result = await postFinancialTransaction({
+    idempotencyKey: `bet_settle_win:${betOrderId}`,
+    requestFingerprint: fingerprint(["BET_SETTLE_WIN", betOrderId, stakeCentimes.toString(), winningsCentimes.toString(), commissionCentimes.toString()]),
+    type: "BET_SETTLEMENT",
+    referenceType: "bet_order",
+    referenceId: betOrderId,
     metadata: JSON.stringify({
       action: "settle_win",
       betOrderId,
@@ -182,14 +247,19 @@ export async function settleWin(
       stake: stakeCentimes.toString(),
       winnings: winningsCentimes.toString(),
       commission: commissionCentimes.toString(),
+      netPayout: netPayout.toString(),
     }),
+    createdBy: "system",
+    entries,
   });
+
+  await syncWalletFromAccounts(bettorId);
+  return result;
 }
 
 /**
- * Settle a losing bet: funds are forfeited (already removed from wallet
- * at match time). We record a ledger entry for auditability but no
- * balance change.
+ * Settle a losing bet: the stake is already in custody from BET_MATCH.
+ * NO zero-value entries. The loss is recorded in BetOrder status only.
  */
 export async function settleLoss(
   bettorId: string,
@@ -197,22 +267,15 @@ export async function settleLoss(
   betOrderId: string,
   marketId: string,
 ) {
-  return ledgerEntry(bettorId, 0n, "BET_SETTLE_LOSS", {
-    refType: "bet_order",
-    refId: betOrderId,
-    availableDelta: 0n,
-    reservedDelta: 0n,
-    metadata: JSON.stringify({
-      action: "settle_loss",
-      betOrderId,
-      marketId,
-      stake: stakeCentimes.toString(),
-    }),
-  });
+  // No financial transaction needed — the stake was already moved to custody
+  // during BET_MATCH. The loss is recorded in the BetOrder's settleOutcome.
+  // We do NOT create a zero-value AccountEntry (per GLM-INSTRUCTIONS.md §2).
+  await syncWalletFromAccounts(bettorId);
+  return { ok: true };
 }
 
 /**
- * Refund a matched bet (market cancelled): return the stake to available.
+ * Refund a matched bet (market cancelled): return the stake from custody to available.
  */
 export async function refundBet(
   bettorId: string,
@@ -220,40 +283,33 @@ export async function refundBet(
   betOrderId: string,
   marketId: string,
 ) {
-  return ledgerEntry(bettorId, stakeCentimes, "BET_REFUND", {
-    refType: "bet_order",
-    refId: betOrderId,
-    availableDelta: stakeCentimes,
-    reservedDelta: 0n,
-    metadata: JSON.stringify({
-      action: "refund",
-      betOrderId,
-      marketId,
-      stake: stakeCentimes.toString(),
-    }),
+  const custodyAcct = await getOrCreateCustodyAccount();
+  const bettorAcct = await getOrCreateBettorAvailableAccount(bettorId);
+
+  const result = await postFinancialTransaction({
+    idempotencyKey: `bet_refund:${betOrderId}`,
+    requestFingerprint: fingerprint(["BET_REFUND", betOrderId, stakeCentimes.toString()]),
+    type: "BET_REFUND",
+    referenceType: "bet_order",
+    referenceId: betOrderId,
+    metadata: JSON.stringify({ action: "refund", betOrderId, marketId, stake: stakeCentimes.toString() }),
+    createdBy: "system",
+    entries: [
+      { accountId: custodyAcct.id, direction: "debit", amountCentimes: stakeCentimes },
+      { accountId: bettorAcct.id, direction: "credit", amountCentimes: stakeCentimes },
+    ],
   });
+
+  await syncWalletFromAccounts(bettorId);
+  return result;
 }
 
-/**
- * Deposit funds (admin/seed only — real payment integration is a stub).
- */
-export async function deposit(bettorId: string, amountCentimes: bigint, referenceId?: string) {
-  return ledgerEntry(bettorId, amountCentimes, "DEPOSIT", {
-    refType: "deposit",
-    refId: referenceId,
-    availableDelta: amountCentimes,
-    metadata: JSON.stringify({ action: "deposit", amount: amountCentimes.toString() }),
-  });
+// Legacy ledgerEntry — DEPRECATED. Do not call. Retained for reference only.
+// All new code must use postFinancialTransaction via the functions above.
+export async function ledgerEntry(): Promise<never> {
+  throw new Error("ledgerEntry() is deprecated. Use the canonical ledger functions (deposit, withdraw, reserveForBet, etc.) instead.");
 }
 
-/**
- * Withdraw funds (admin/seed only — real payment integration is a stub).
- */
-export async function withdraw(bettorId: string, amountCentimes: bigint, referenceId?: string) {
-  return ledgerEntry(bettorId, -amountCentimes, "WITHDRAWAL", {
-    refType: "withdrawal",
-    refId: referenceId,
-    availableDelta: -amountCentimes,
-    metadata: JSON.stringify({ action: "withdrawal", amount: amountCentimes.toString() }),
-  });
+function btorIdSafe(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_-]/g, "");
 }
