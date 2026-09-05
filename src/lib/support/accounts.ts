@@ -1,179 +1,91 @@
-// FIFAYITI SIPÒ — Team Support Fund + Player Earnings account management.
+// FIFAYITI SIPÒ + PARIAJ — Account management for the canonical financial ledger.
 //
-// REUSES the existing Account/AccountEntry double-entry ledger. Team +
-// player accounts are just Account rows with:
-//   type = "team_support"    + teamId set
-//   type = "player_earnings" + playerId set
-//
-// This module provides:
-//   - getOrCreateTeamAccount(teamId) → Account (type="team_support")
-//   - getOrCreatePlayerAccount(playerId) → Account (type="player_earnings")
-//   - getTeamSupportBalance(teamId) → BigInt (the team's current fund)
-//   - getPlayerEarnings(playerId) → BigInt (the player's total earnings)
-//   - postDoubleEntry(tx, { debit, credit, amount, ledgerType, ref }) →
-//     writes TWO AccountEntry rows (one debit + one credit) inside a
-//     Prisma transaction, updating both account balances.
+// REUSES the existing Account model with the new normalBalance field.
+// Account types have explicit normal-balance semantics:
+//   DEBIT-normal:  debit increases, credit decreases (custody, settlement)
+//   CREDIT-normal: credit increases, debit decreases (bettor, team, player, revenue)
 
 import { db } from "@/lib/db";
-import { randomUUID } from "crypto";
 
-/** Get or create the team's support fund account. */
+const NORMAL_BALANCE: Record<string, "DEBIT" | "CREDIT"> = {
+  platform_custody: "DEBIT",
+  platform_revenue: "CREDIT",
+  platform_settlement: "DEBIT",
+  bettor_available: "CREDIT",
+  bettor_reserved: "CREDIT",
+  team_support: "CREDIT",
+  player_earnings: "CREDIT",
+};
+
+async function getOrCreateAccount(opts: {
+  type: string;
+  bettorId?: string;
+  teamId?: string;
+  playerId?: string;
+  currency?: string;
+}): Promise<any> {
+  const where: any = { type: opts.type };
+  if (opts.bettorId) where.bettorId = opts.bettorId;
+  if (opts.teamId) where.teamId = opts.teamId;
+  if (opts.playerId) where.playerId = opts.playerId;
+
+  let account = await db.account.findFirst({ where });
+  if (!account) {
+    try {
+      account = await db.account.create({
+        data: {
+          type: opts.type,
+          normalBalance: NORMAL_BALANCE[opts.type] ?? "CREDIT",
+          bettorId: opts.bettorId ?? null,
+          teamId: opts.teamId ?? null,
+          playerId: opts.playerId ?? null,
+          currency: opts.currency ?? "HTG",
+        },
+      });
+    } catch {
+      account = await db.account.findFirst({ where });
+    }
+  }
+  return account;
+}
+
 export async function getOrCreateTeamAccount(teamId: string) {
-  let account = await db.account.findFirst({
-    where: { type: "team_support", teamId },
-  });
-  if (!account) {
-    try {
-      account = await db.account.create({
-        data: { type: "team_support", teamId, currency: "HTG" },
-      });
-    } catch {
-      // Race — re-read.
-      account = await db.account.findFirst({
-        where: { type: "team_support", teamId },
-      });
-    }
-  }
-  return account;
+  return getOrCreateAccount({ type: "team_support", teamId });
 }
 
-/** Get or create a player's earnings account. */
 export async function getOrCreatePlayerAccount(playerId: string) {
-  let account = await db.account.findFirst({
-    where: { type: "player_earnings", playerId },
-  });
-  if (!account) {
-    try {
-      account = await db.account.create({
-        data: { type: "player_earnings", playerId, currency: "HTG" },
-      });
-    } catch {
-      account = await db.account.findFirst({
-        where: { type: "player_earnings", playerId },
-      });
-    }
-  }
-  return account;
+  return getOrCreateAccount({ type: "player_earnings", playerId });
 }
 
-/** Get the team's current support fund balance (centimes). */
+export async function getOrCreateBettorAvailableAccount(bettorId: string) {
+  return getOrCreateAccount({ type: "bettor_available", bettorId });
+}
+
+export async function getOrCreateBettorReservedAccount(bettorId: string) {
+  return getOrCreateAccount({ type: "bettor_reserved", bettorId });
+}
+
+export async function getOrCreateCustodyAccount() {
+  return getOrCreateAccount({ type: "platform_custody" });
+}
+
+export async function getOrCreateRevenueAccount() {
+  return getOrCreateAccount({ type: "platform_revenue" });
+}
+
 export async function getTeamSupportBalance(teamId: string): Promise<bigint> {
   const account = await getOrCreateTeamAccount(teamId);
   return account.balanceCentimes;
 }
 
-/** Get a player's total earnings balance (centimes). */
 export async function getPlayerEarnings(playerId: string): Promise<bigint> {
   const account = await getOrCreatePlayerAccount(playerId);
   return account.balanceCentimes;
 }
 
 /**
- * Post a balanced double-entry transaction inside a Prisma transaction.
- *
- * Writes TWO AccountEntry rows (debit + credit) + updates both account
- * balances. The `transactionId` groups the two entries so reconciliation
- * can verify Σ debits == Σ credits per transaction.
- *
- * @param tx       the Prisma transaction client
- * @param debit    { accountId, amount } — the account to debit
- * @param credit   { accountId, amount } — the account to credit
- * @param ledgerType  e.g. "TEAM_DONATION", "TEAM_DISTRIBUTION"
- * @param refType  reference entity type (e.g. "team_donation")
- * @param refId    reference entity id
- * @returns the transactionId (groups the two entries)
+ * Post a balanced double-entry transaction.
+ * Uses the canonical postFinancialTransaction from src/lib/finance/ledger.ts.
+ * This is the ONLY way to move money in the system.
  */
-export async function postDoubleEntry(
-  tx: any,
-  opts: {
-    debit: { accountId: string; amount: bigint };
-    credit: { accountId: string; amount: bigint };
-    ledgerType: string;
-    refType?: string;
-    refId?: string;
-    metadata?: string;
-  },
-): Promise<string> {
-  const transactionId = randomUUID();
-
-  // Validate: debits == credits (balanced).
-  if (opts.debit.amount !== opts.credit.amount) {
-    throw new Error(
-      `Unbalanced entry: debit ${opts.debit.amount} ≠ credit ${opts.credit.amount}`,
-    );
-  }
-  if (opts.debit.amount <= 0n) {
-    throw new Error("Amount must be positive.");
-  }
-
-  // Debit entry — decrease the source account.
-  const debitAccount = await tx.account.findUnique({
-    where: { id: opts.debit.accountId },
-  });
-  if (!debitAccount) throw new Error("Debit account not found.");
-  if (debitAccount.balanceCentimes < opts.debit.amount) {
-    throw new Error("Insufficient funds in debit account.");
-  }
-  await tx.account.update({
-    where: { id: opts.debit.accountId },
-    data: { balanceCentimes: debitAccount.balanceCentimes - opts.debit.amount },
-  });
-  await tx.accountEntry.create({
-    data: {
-      transactionId,
-      accountId: opts.debit.accountId,
-      direction: "debit",
-      amountCentimes: opts.debit.amount,
-      ledgerType: opts.ledgerType,
-      referenceType: opts.refType ?? null,
-      referenceId: opts.refId ?? null,
-      metadata: opts.metadata ?? null,
-    },
-  });
-
-  // Credit entry — increase the destination account.
-  const creditAccount = await tx.account.findUnique({
-    where: { id: opts.credit.accountId },
-  });
-  if (!creditAccount) throw new Error("Credit account not found.");
-  await tx.account.update({
-    where: { id: opts.credit.accountId },
-    data: { balanceCentimes: creditAccount.balanceCentimes + opts.credit.amount },
-  });
-  await tx.accountEntry.create({
-    data: {
-      transactionId,
-      accountId: opts.credit.accountId,
-      direction: "credit",
-      amountCentimes: opts.credit.amount,
-      ledgerType: opts.ledgerType,
-      referenceType: opts.refType ?? null,
-      referenceId: opts.refId ?? null,
-      metadata: opts.metadata ?? null,
-    },
-  });
-
-  return transactionId;
-}
-
-/**
- * Get the platform custody account (FIFAYITI's master account).
- * All real money enters here before being credited to team/player/bettor accounts.
- */
-export async function getOrCreateCustodyAccount() {
-  let account = await db.account.findFirst({
-    where: { type: "platform_custody", bettorId: null, teamId: null, playerId: null },
-  });
-  if (!account) {
-    try {
-      account = await db.account.create({
-        data: { type: "platform_custody", currency: "HTG" },
-      });
-    } catch {
-      account = await db.account.findFirst({
-        where: { type: "platform_custody", bettorId: null, teamId: null, playerId: null },
-      });
-    }
-  }
-  return account;
-}
+export { postFinancialTransaction } from "../finance/ledger";

@@ -2,7 +2,8 @@
 //
 // The payment provider calls this after a payment is confirmed. The
 // handler verifies the webhook signature (provider-specific), finds the
-// matching PaymentIntent, and credits the bettor's wallet — atomically.
+// matching PaymentIntent, and credits the bettor's wallet via the
+// canonical financial ledger — atomically.
 //
 // IDEMPOTENCY:
 //   The PaymentIntent has @@unique([provider, providerPaymentId]). If the
@@ -30,12 +31,10 @@ export async function POST(
     return NextResponse.json({ error: "unknown provider" }, { status: 404 });
   }
 
-  // Read the raw body (signature verification needs the exact bytes).
   const rawBody = await req.text();
   const headers: Record<string, string> = {};
   req.headers.forEach((v, k) => { headers[k] = v; });
 
-  // Verify the webhook (provider-specific signature check).
   const provider = getProvider(providerName as any);
   let verified;
   try {
@@ -46,7 +45,6 @@ export async function POST(
   }
 
   if (verified.status !== "paid") {
-    // Payment failed — mark the intent as failed but no wallet change.
     await db.paymentIntent.updateMany({
       where: { id: verified.intentId, status: "pending" },
       data: { status: "failed", providerPaymentId: verified.providerPaymentId, rawWebhookPayload: rawBody },
@@ -54,42 +52,28 @@ export async function POST(
     return NextResponse.json({ ok: true, status: "failed" });
   }
 
-  // ── IDEMPOTENT CREDIT ───────────────────────────────────────────────
-  // Atomically: mark the intent as paid AND credit the wallet. If the
-  // intent is already "paid" (webhook retry), do nothing — return 200.
   try {
-    await db.$transaction(async (tx) => {
-      // Lock the intent row by re-reading it inside the transaction.
-      const intent = await tx.paymentIntent.findUnique({
-        where: { id: verified.intentId },
-      });
-      if (!intent) {
-        throw new Error("intent not found");
-      }
-      if (intent.status === "paid") {
-        // Already processed (webhook retry). Idempotent return.
-        return;
-      }
-      if (intent.status === "failed") {
-        throw new Error("intent already failed");
-      }
+    // Mark the intent as paid first (idempotent).
+    const intent = await db.paymentIntent.findUnique({ where: { id: verified.intentId } });
+    if (!intent) return NextResponse.json({ error: "intent not found" }, { status: 404 });
+    if (intent.status === "paid") return NextResponse.json({ ok: true, status: "duplicate" });
 
-      // Mark as paid + record the provider's payment id.
-      await tx.paymentIntent.update({
-        where: { id: intent.id },
-        data: {
-          status: "paid",
-          providerPaymentId: verified.providerPaymentId,
-          confirmedAt: new Date(),
-          rawWebhookPayload: rawBody,
-        },
-      });
-
-      // Credit the bettor's wallet via the double-entry ledger.
-      // The `deposit` helper writes a LedgerEntry + updates the Wallet
-      // inside this same transaction (atomic).
-      await deposit(intent.bettorId, intent.amountCentimes, intent.id);
+    await db.paymentIntent.update({
+      where: { id: intent.id },
+      data: {
+        status: "paid",
+        providerPaymentId: verified.providerPaymentId,
+        confirmedAt: new Date(),
+        rawWebhookPayload: rawBody,
+      },
     });
+
+    // Credit via the canonical financial ledger (no LedgerEntry writes).
+    // The `deposit` function creates a FinancialTransaction + AccountEntry rows
+    // + updates Account balances + syncs the Wallet projection.
+    if (intent.bettorId) {
+      await deposit(intent.bettorId, intent.amountCentimes, intent.id);
+    }
 
     await logBettingAction({
       actorType: "system",
@@ -101,8 +85,6 @@ export async function POST(
 
     return NextResponse.json({ ok: true, status: "paid" });
   } catch (e: any) {
-    // If the unique constraint on (provider, providerPaymentId) fires,
-    // this is a duplicate webhook — idempotent return.
     if (String(e?.code ?? "").includes("P2002")) {
       return NextResponse.json({ ok: true, status: "duplicate" });
     }

@@ -399,9 +399,9 @@ enum BettorStatus {
 model Wallet {
   id              String   @id @default(cuid())
   bettorId        String   @unique
-  bettor          Bettor   @relation(fields: [bettorId], references: [id], onDelete: Cascade)
-  availableCentimes  BigInt @default(0)   // spendable now
-  reservedCentimes  BigInt @default(0)   // locked in open bets
+  bettor          Bettor   @relation(fields: [bettorId], references: [id])  // NO onDelete: Cascade — financial history must not be destroyed
+  availableCentimes  BigInt @default(0)   // PROJECTION of Account(type=bettor_available).balanceCentimes
+  reservedCentimes  BigInt @default(0)   // PROJECTION of Account(type=bettor_reserved).balanceCentimes
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -428,7 +428,7 @@ model Wallet {
 model LedgerEntry {
   id              String   @id @default(cuid())
   bettorId        String
-  bettor          Bettor   @relation(fields: [bettorId], references: [id], onDelete: Cascade)
+  bettor          Bettor   @relation(fields: [bettorId], references: [id])  // NO onDelete: Cascade — financial history must not be destroyed
   amountCentimes BigInt                     // +credit / -debit in minor units
   type            LedgerType
   referenceType   String?                    // "bet_order" | "market" | "deposit" | ...
@@ -619,8 +619,8 @@ model OfficialEvent {
   id              String   @id @default(cuid())
   matchId         String
   match           Match    @relation(fields: [matchId], references: [id])
-  matchEventId    String?                     // link to the source MatchEvent
-  sequenceNumber  Int                        // monotonic per-match ordering
+  matchEventId    String?  @unique           // link to the source MatchEvent — one OfficialEvent per MatchEvent
+  sequenceNumber  Int
   eventType       String                     // GOL | GOAL_CANCELLED | YELLOW_CARD | ...
   teamId          String?
   playerId        String?
@@ -635,8 +635,9 @@ model OfficialEvent {
 
   supersedes      OfficialEvent? @relation("EventSupersession", fields: [supersedesId], references: [id])
   supersededBy    OfficialEvent[] @relation("EventSupersession")
+  settlements     SettlementTransaction[]
 
-  @@index([matchId, sequenceNumber])
+  @@unique([matchId, sequenceNumber])
   @@index([matchId, status, eventType])
 }
 
@@ -703,7 +704,8 @@ model PaymentIntent {
 model SettlementTransaction {
   id              String   @id @default(cuid())
   marketId        String
-  settleEventId   String                      // the OfficialEvent that settled this
+  settleEventId   String
+  settleEvent     OfficialEvent @relation(fields: [settleEventId], references: [id])  // FK — no free-form string
   outcome         String                      // "settled" | "refunded" | "no_action"
   winningSelectionKey String?
   winnerCount      Int     @default(0)
@@ -716,8 +718,6 @@ model SettlementTransaction {
 
   market          BettingMarket @relation(fields: [marketId], references: [id])
 
-  // ONE settlement per (market, triggering event). A duplicate retry
-  // violates this constraint and the caller sees "already settled".
   @@unique([marketId, settleEventId])
   @@index([marketId])
 }
@@ -737,18 +737,20 @@ model SettlementTransaction {
 //   platform_settlement — clearing account during settlement
 model Account {
   id              String   @id @default(cuid())
-  type            String                     // bettor_available | bettor_reserved | team_support | player_earnings | platform_*
+  type            String                     // platform_custody | platform_revenue | platform_settlement | bettor_available | bettor_reserved | team_support | player_earnings
+  normalBalance   String   @default("CREDIT")  // DEBIT or CREDIT — controls signed delta interpretation
   bettorId        String?                    // null for non-bettor accounts
   teamId          String?                    // set for team_support accounts
   playerId        String?                    // set for player_earnings accounts
   currency        String   @default("HTG")
-  balanceCentimes BigInt  @default(0)       // running balance (denormalized)
+  balanceCentimes BigInt  @default(0)       // running balance (denormalized projection of AccountEntry)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   entries         AccountEntry[]
 
-  @@unique([type, bettorId, teamId, playerId])
+  // Application-level uniqueness; DB partial unique indexes added via SQL migration
+  // for race-proof guarantees. See prisma/migrations/20260904_financial_hardening/migration.sql
   @@index([type])
   @@index([bettorId])
   @@index([teamId])
@@ -762,20 +764,51 @@ model Account {
 // so reconciliation can verify Σ debits == Σ credits per transaction.
 model AccountEntry {
   id              String   @id @default(cuid())
-  transactionId   String                     // groups debit + credit of one transaction
+  transactionId   String
+  transaction     FinancialTransaction @relation(fields: [transactionId], references: [id])
   accountId       String
-  account         Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  direction       String                     // "debit" | "credit"
-  amountCentimes BigInt                      // always positive
-  ledgerType      String                     // DEPOSIT | BET_RESERVE | BET_MATCH | SETTLE_WIN | ...
-  referenceType   String?                    // "bet_order" | "payment_intent" | "market" | ...
+  account         Account @relation(fields: [accountId], references: [id])  // NO onDelete: Cascade — financial history is immutable
+  direction       String                     // "debit" | "credit" (CHECK enforced at DB level)
+  amountCentimes BigInt                      // always > 0 (CHECK enforced at DB level)
+  ledgerType      String                     // mirrors FinancialTransaction.type for query convenience
+  referenceType   String?
   referenceId     String?
   createdAt       DateTime @default(now())
   metadata        String?
 
   @@index([accountId, createdAt])
-  @@index([transactionId])
+  @@index([transactionId, createdAt])
   @@index([ledgerType])
+  @@index([referenceType, referenceId])
+}
+
+// ── FinancialTransaction — canonical immutable transaction header ──
+// Every financial operation creates exactly one FinancialTransaction +
+// >=2 AccountEntry rows. The transaction is created in POSTING status,
+// entries are written, balances updated, and then it transitions to POSTED.
+// Posted transactions + entries are immutable (enforced by PostgreSQL triggers).
+// Idempotency: idempotencyKey is unique; same key + same requestFingerprint
+// returns the original result; same key + different fingerprint is rejected.
+model FinancialTransaction {
+  id                String   @id @default(cuid())
+  type              String                     // TransactionType enum value
+  status            String   @default("DRAFT")   // DRAFT | POSTING | POSTED | FAILED | REVERSED
+  currency          String   @default("HTG")
+  idempotencyKey    String   @unique           // unique per operation
+  requestFingerprint String?                   // payload hash for idempotency validation
+  referenceType     String?
+  referenceId       String?
+  metadata          String?
+  createdBy         String?                    // actor identity (admin email / "system")
+  postedAt         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  entries           AccountEntry[]
+
+  @@index([status, createdAt])
+  @@index([referenceType, referenceId])
+  @@index([type, createdAt])
 }
 
 // ── OutboxEvent — transactional outbox for the event → settlement chain (spec Part 7) ──
