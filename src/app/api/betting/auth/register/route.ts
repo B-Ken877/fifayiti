@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { hashPassword, createBettorSessionCookie } from "@/lib/betting/bettor-session";
+import { getBettingSecret } from "@/lib/auth/secret";
 import { logBettingAction } from "@/lib/betting/audit";
 import { rateLimit, LIMITS, clientIp } from "@/lib/rate-limit";
 
@@ -46,6 +47,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // Validate session signing configuration before creating any account or
+    // wallet records. Otherwise a missing production secret leaves behind an
+    // account that cannot complete registration and blocks a retry.
+    getBettingSecret();
+
     if (Number(req.headers.get("content-length") ?? 0) > 16 * 1024) {
       return NextResponse.json({ error: "Done demann lan twò gwo." }, { status: 413 });
     }
