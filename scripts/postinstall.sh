@@ -37,6 +37,8 @@ if [[ "${DATABASE_URL:-}" == postgres* ]]; then
   if [[ "${VERCEL_ENV:-}" == "preview" ]]; then
     echo "[postinstall] Applying Prisma schema to the isolated Preview database."
     bunx prisma db push --schema "$TMP_SCHEMA"
+    echo "[postinstall] Seeding idempotent betting configuration for Preview."
+    bun scripts/seed-betting.ts
   fi
 else
   echo "[postinstall] DATABASE_URL is SQLite (or unset) — generating SQLite Prisma client."
