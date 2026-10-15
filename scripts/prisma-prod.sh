@@ -38,4 +38,4 @@ trap 'rm -f "$TMP_SCHEMA"' EXIT
 
 echo "→ Running: prisma $* --schema $TMP_SCHEMA"
 cd "$ROOT_DIR"
-exec bunx prisma "$@" --schema "$TMP_SCHEMA"
+bunx prisma "$@" --schema "$TMP_SCHEMA"

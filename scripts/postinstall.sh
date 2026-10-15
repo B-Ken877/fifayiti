@@ -31,6 +31,13 @@ if [[ "${DATABASE_URL:-}" == postgres* ]]; then
   ' "$SRC_SCHEMA" > "$TMP_SCHEMA"
   trap 'rm -f "$TMP_SCHEMA"' EXIT
   bunx prisma generate --schema "$TMP_SCHEMA"
+
+  # Preview deployments use their own Neon database branch. Keep its schema
+  # in sync before the app build; never push schema changes to Production.
+  if [[ "${VERCEL_ENV:-}" == "preview" ]]; then
+    echo "[postinstall] Applying Prisma schema to the isolated Preview database."
+    bunx prisma db push --schema "$TMP_SCHEMA"
+  fi
 else
   echo "[postinstall] DATABASE_URL is SQLite (or unset) — generating SQLite Prisma client."
   # For SQLite, the schema's default provider=sqlite is correct.
