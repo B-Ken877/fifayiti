@@ -63,8 +63,11 @@ export function rateLimit(
     return Promise.resolve({ ...store().hit(key, limit, windowMs), available: true });
   }
 
-  const redisUrl = process.env.UPSTASH_REDIS_REST_URL?.replace(/\/$/, "");
-  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+  // Support both native Upstash names and the Vercel integration's KV names.
+  const redisUrl = (
+    process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL
+  )?.replace(/\/$/, "");
+  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
   if (!redisUrl || !redisToken || !redisUrl.startsWith("https://")) {
     return Promise.resolve({ allowed: false, remaining: 0, resetMs: windowMs, available: false });
   }
