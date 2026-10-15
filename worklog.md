@@ -921,3 +921,26 @@ Stage Summary:
 - Match-control has Fot + Kònè buttons alongside existing GOL/Kat Jòn/Kat Wouj/Ranplasman
 - Statistics available live via API for the TV page + future viewer stats
 
+
+---
+Task ID: 19
+Agent: Super Z (main agent)
+Task: Phase 0 audit + Phase 1 video decoupling (FIFAYITI Engineering Handoff)
+
+Work Log:
+- Phase 0 baseline (commit 76712e8 on main): 41 tests pass / 12 fail (all in SIPÒ donation tests — pre-existing SQLite migration drift, Account.normalBalance column missing from dev.db); 226 TS errors (all pre-existing in tests/scripts, BigInt literals target issue); 81 ESLint errors; Next.js production build ✓ Compiled successfully in 4.4s; 38/38 static pages generated.
+- Phase 0 audit identified video coupling: src/app/api/matches/[id]/events/route.ts `await`ed pushBroadcastMatchUpdate + triggerBroadcastReplay (blocked HTTP response on LiveKit); src/app/api/matches/[id]/phase/route.ts same pattern on every 1s clock tick; src/lib/streaming/broadcast-state.ts + src/lib/betting/market-state.ts constructed `new RoomServiceClient(...)` at module top-level (import fails if SDK constructor throws); src/lib/streaming/livekit-config.ts hardcoded LiveKit Cloud credentials (committed to git history → compromised).
+- Phase 1 implementation: introduced BroadcastAdapter interface in src/lib/streaming/broadcast-adapter.ts with two implementations (LiveKitBroadcastAdapter wraps existing functions; DisabledBroadcastAdapter no-op); factory getBroadcastAdapter() reads FIFAYITI_BROADCAST_PROVIDER env var.
+- Phase 1 events route refactor: replaced `await pushBroadcastMatchUpdate(...).catch(()=>{})` with `void getBroadcastAdapter().publishMatchUpdate(...).catch(logBroadcastFailure)` (fire-and-forget + structured JSON log). Same for triggerBroadcastReplay → adapter.requestReplay. Settlement call (onOfficialEventConfirmed) kept `await`-ed but upgraded from `.catch(()=>{})` to a structured error log.
+- Phase 1 phase route refactor: same fire-and-forget pattern on the 1s clock tick path.
+- Phase 1 lazy RoomServiceClient: broadcast-state.ts and market-state.ts now use a `let _roomService; function getRoomService()` lazy getter so importing these modules (transitively the events/phase/betting routes) never throws if the LiveKit SDK constructor throws.
+- Phase 1 env-var override for LiveKit creds: livekit-config.ts now reads optional FIFAYITI_LIVEKIT_API_KEY / _API_SECRET / _HOST with the hardcoded values kept only as a transitional fallback. .env.example documents all new env vars.
+- Phase 1 acceptance tests: tests/phase1-video-decoupling.test.ts (7 tests) covers (1) GOL recorded when adapter throws, (2) 201 returned within 1s even when adapter is slow (2s), (3) FIFAYITI_BROADCAST_PROVIDER=disabled path, (4) phase route clock tick non-fatal, (5) phase route start match with disabled adapter, (6) auth boundary intact (401), (7) authorization boundary intact (403). All 7 pass; security-events.test.ts still passes (8/8); build ✓ Compiled successfully; broadcast-adapter.ts has 0 TS errors.
+- Phase 1 docs: docs/PHASE1-BROADCAST-BOUNDARY.md describes the boundary, what changed, what was preserved, env-var knobs, and remaining risks.
+
+Stage Summary:
+- Match operations, betting settlement, and donation accounting now function with the video stack entirely absent (FIFAYITI_BROADCAST_PROVIDER=disabled).
+- Broadcast failures (LiveKit slow / unavailable / misconfigured) no longer delay or invalidate official match events — they emit structured JSON logs and the operator's response returns immediately.
+- Existing LiveKit / FIFAYITI TV / HLS / DVR / replay functionality is preserved unchanged when the adapter is in default (livekit) mode — LiveKitBroadcastAdapter calls the same existing functions with the same arguments.
+- SECURITY RISK: LiveKit Cloud credentials remain hardcoded as fallbacks in src/lib/streaming/livekit-config.ts and are committed to git history. Rotation is required on the LiveKit Cloud dashboard + setting FIFAYITI_LIVEKIT_* env vars in production. Flagged in the final report.
+- 0 regressions introduced: same 12 pre-existing SIPÒ test failures as baseline; same TS error pattern; build still passes.

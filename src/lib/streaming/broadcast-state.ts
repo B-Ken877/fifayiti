@@ -34,7 +34,23 @@ import {
 
 export const BROADCAST_ROOM = "fifayiti-broadcast";
 
-const roomService = new RoomServiceClient(LIVEKIT_URL, API_KEY, API_SECRET);
+// LAZY CONSTRUCTION (spec Phase 1.1 — Phase 1.4):
+//   The previous top-level `const roomService = new RoomServiceClient(...)`
+//   meant importing this module (transitively, the matches/events route)
+//   would crash if the livekit-server-sdk constructor ever threw — for
+//   example because the SDK is replaced with an incompatible version, or
+//   because a future config-validation pass rejects missing creds at
+//   construction time. By deferring construction to the first call, the
+//   events route can still load, still persist the goal, and still settle
+//   bets when the LiveKit client cannot be created.
+//
+//   No behavior change for the happy path (LiveKit creds configured).
+let _roomService: RoomServiceClient | null = null;
+function getRoomService(): RoomServiceClient {
+  if (_roomService) return _roomService;
+  _roomService = new RoomServiceClient(LIVEKIT_URL, API_KEY, API_SECRET);
+  return _roomService;
+}
 
 export interface BroadcastMatchData {
   matchId: string;
@@ -82,7 +98,7 @@ export async function buildMatchDataFromDb(
 
 async function getRoomMetadata(): Promise<{ roomExists: boolean; metadata: any }> {
   try {
-    const rooms = await roomService.listRooms();
+    const rooms = await getRoomService().listRooms();
     const room = rooms.find((r: any) => r.name === BROADCAST_ROOM);
     if (!room) return { roomExists: false, metadata: null };
     try {
@@ -222,13 +238,13 @@ export async function pushBroadcastMatchUpdate(
 
     const payload = JSON.stringify(merged);
     try {
-      await roomService.updateRoomMetadata(BROADCAST_ROOM, payload);
+      await getRoomService().updateRoomMetadata(BROADCAST_ROOM, payload);
     } catch (e: any) {
       if (isRoomMissingError(e)) {
         // Room idle-deleted — recreate it carrying the metadata so the
         // scorebug/overlay still reach viewers when cameras reconnect.
         try {
-          await roomService.createRoom({
+          await getRoomService().createRoom({
             name: BROADCAST_ROOM,
             metadata: payload,
             emptyTimeout: 3600,
