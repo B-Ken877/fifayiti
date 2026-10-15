@@ -60,7 +60,8 @@ export async function POST(
   }
 
   // ── 3. RATE LIMIT (per operator) ───────────────────────────────────
-  const rl = rateLimit("event_create", role, LIMITS.EVENT_CREATE.limit, LIMITS.EVENT_CREATE.windowMs);
+  const rl = await rateLimit("event_create", role, LIMITS.EVENT_CREATE.limit, LIMITS.EVENT_CREATE.windowMs);
+  if (!rl.available) return NextResponse.json({ error: "Sèvis la pa disponib kounye a." }, { status: 503 });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Trop demann. Eseye ankò nan kèk segond." },

@@ -64,16 +64,32 @@ export async function tryMatch(newBetOrderId: string): Promise<MatchResult> {
         return { matched: false, reason: "no opposing open bet at this stake" };
       }
 
-      // Atomically update both orders.
+      // Serialize market closure/suspension against this match. The no-op
+      // update acquires the market row lock without changing its lifecycle.
+      const openMarket = await tx.bettingMarket.updateMany({
+        where: { id: newBet.marketId, status: "OPEN" },
+        data: { status: "OPEN" },
+      });
+      if (openMarket.count !== 1) return { matched: false, reason: "market is no longer open" };
+
+      // Claim both orders conditionally, and move both stakes from reserved
+      // into custody in this same database transaction. Concurrent matchers
+      // cannot claim the same order or leave a MATCHED order unfunded.
       const now = new Date();
-      await tx.betOrder.update({
-        where: { id: newBet.id },
+      const claimedNew = await tx.betOrder.updateMany({
+        where: { id: newBet.id, status: "OPEN" },
         data: { status: "MATCHED", matchedWithId: opposing.id, matchedAt: now },
       });
-      await tx.betOrder.update({
-        where: { id: opposing.id },
+      const claimedOpposing = await tx.betOrder.updateMany({
+        where: { id: opposing.id, status: "OPEN" },
         data: { status: "MATCHED", matchedWithId: newBet.id, matchedAt: now },
       });
+      if (claimedNew.count !== 1 || claimedOpposing.count !== 1) {
+        throw new Error("bet order was claimed by another matcher");
+      }
+
+      await matchBetFunds(newBet.bettorId, newBet.stakeCentimes, newBet.id, tx);
+      await matchBetFunds(opposing.bettorId, opposing.stakeCentimes, opposing.id, tx);
 
       return {
         matched: true,
@@ -92,22 +108,23 @@ export async function tryMatch(newBetOrderId: string): Promise<MatchResult> {
  */
 export async function cancelOpenBet(betOrderId: string, bettorId: string): Promise<{ ok: boolean; reason?: string }> {
   try {
-    const bet = await db.betOrder.findUnique({ where: { id: betOrderId } });
-    if (!bet) return { ok: false, reason: "bet not found" };
-    if (bet.bettorId !== bettorId) return { ok: false, reason: "not your bet" };
-    if (bet.status !== "OPEN" && bet.status !== "RESERVED") {
-      return { ok: false, reason: `bet is ${bet.status} (cannot cancel)` };
-    }
+    return await db.$transaction(async (tx) => {
+      const bet = await tx.betOrder.findUnique({ where: { id: betOrderId } });
+      if (!bet) return { ok: false, reason: "bet not found" };
+      if (bet.bettorId !== bettorId) return { ok: false, reason: "not your bet" };
+      if (bet.status !== "OPEN" && bet.status !== "RESERVED") {
+        return { ok: false, reason: `bet is ${bet.status} (cannot cancel)` };
+      }
 
-    await db.betOrder.update({
-      where: { id: betOrderId },
-      data: { status: "CANCELLED" },
+      const claimed = await tx.betOrder.updateMany({
+        where: { id: betOrderId, bettorId, status: bet.status },
+        data: { status: "CANCELLED" },
+      });
+      if (claimed.count !== 1) return { ok: false, reason: "bet can no longer be cancelled" };
+
+      await releaseFromBet(bettorId, bet.stakeCentimes, betOrderId, tx);
+      return { ok: true };
     });
-
-    // Use the canonical ledger to release reserved funds.
-    await releaseFromBet(bettorId, bet.stakeCentimes, betOrderId);
-
-    return { ok: true };
   } catch (e: any) {
     return { ok: false, reason: e?.message };
   }

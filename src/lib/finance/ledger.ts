@@ -48,7 +48,7 @@ function q(value: unknown) {
  * complete semantic operation payload. Reusing a key with a different
  * fingerprint is rejected.
  */
-export async function postFinancialTransaction(input: PostFinancialTransactionInput) {
+export async function postFinancialTransaction(input: PostFinancialTransactionInput, transactionClient?: any) {
   if (!input.idempotencyKey.trim()) throw new Error("idempotencyKey is required");
   if (!input.requestFingerprint.trim()) throw new Error("requestFingerprint is required");
   if (input.entries.length < 2) throw new Error("A financial transaction requires at least two entries");
@@ -64,7 +64,7 @@ export async function postFinancialTransaction(input: PostFinancialTransactionIn
     throw new Error(`Unbalanced transaction: debits=${debits} credits=${credits}`);
   }
 
-  return db.$transaction(async (tx) => {
+  const post = async (tx: any) => {
     const transactionId = crypto.randomUUID();
 
     // Claim the idempotency key. If another request already owns it, the
@@ -117,6 +117,7 @@ export async function postFinancialTransaction(input: PostFinancialTransactionIn
       FROM "Account"
       WHERE "id" IN (${accountIds.map((id) => `'${q(id)}'`).join(",")})
       ORDER BY "id"
+      FOR UPDATE
     `);
 
     const byId = new Map(locked.map((a) => [a.id, a]));
@@ -167,5 +168,10 @@ export async function postFinancialTransaction(input: PostFinancialTransactionIn
     `);
 
     return { transactionId: header.id, alreadyPosted: false };
-  });
+  };
+
+  // Allow domain changes and their ledger effects to commit or roll back in
+  // the same database transaction. The caller must pass a Prisma transaction
+  // client, never a long-lived PrismaClient instance here.
+  return transactionClient ? post(transactionClient) : db.$transaction(post);
 }

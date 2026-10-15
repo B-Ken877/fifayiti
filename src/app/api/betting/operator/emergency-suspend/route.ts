@@ -26,7 +26,8 @@ export async function POST(req: NextRequest) {
   }
 
   // Rate limit: 2/min (kill switch — rare; prevents panic-spam).
-  const rl = rateLimit("emergency_suspend", role, LIMITS.EMERGENCY.limit, LIMITS.EMERGENCY.windowMs);
+  const rl = await rateLimit("emergency_suspend", role, LIMITS.EMERGENCY.limit, LIMITS.EMERGENCY.windowMs);
+  if (!rl.available) return NextResponse.json({ error: "Sèvis la pa disponib kounye a." }, { status: 503 });
   if (!rl.allowed) {
     return NextResponse.json({ error: "Trop demann urjans. Eseye ankò pita." }, { status: 429 });
   }

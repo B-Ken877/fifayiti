@@ -16,6 +16,7 @@ import {
   getOrCreateBettorAvailableAccount,
   getOrCreateBettorReservedAccount,
   getOrCreateCustodyAccount,
+  getOrCreateBettingPoolAccount,
   getOrCreateRevenueAccount,
 } from "@/lib/support/accounts";
 import { createHash } from "crypto";
@@ -28,15 +29,19 @@ export interface WalletSnapshot {
 
 /** Read a bettor's wallet (creates one if missing). */
 export async function getWallet(bettorId: string) {
-  let wallet = await db.wallet.findUnique({ where: { bettorId } });
-  if (!wallet) {
-    try {
-      wallet = await db.wallet.create({ data: { bettorId } });
-    } catch {
-      wallet = await db.wallet.findUnique({ where: { bettorId } });
-    }
+  const current = await db.wallet.findUnique({ where: { bettorId } });
+  if (current) return current;
+  const available = await getOrCreateBettorAvailableAccount(bettorId);
+  const reserved = await getOrCreateBettorReservedAccount(bettorId);
+  try {
+    return await db.wallet.create({
+      bettorId,
+      availableCentimes: available.balanceCentimes,
+      reservedCentimes: reserved.balanceCentimes,
+    });
+  } catch {
+    return db.wallet.findUnique({ where: { bettorId } });
   }
-  return wallet;
 }
 
 /**
@@ -45,8 +50,8 @@ export async function getWallet(bettorId: string) {
  */
 async function syncWalletFromAccounts(bettorId: string, tx?: any) {
   const client = tx ?? db;
-  const available = await getOrCreateBettorAvailableAccount(bettorId);
-  const reserved = await getOrCreateBettorReservedAccount(bettorId);
+  const available = await getOrCreateBettorAvailableAccount(bettorId, client);
+  const reserved = await getOrCreateBettorReservedAccount(bettorId, client);
   await client.wallet.upsert({
     where: { bettorId },
     update: {
@@ -69,9 +74,9 @@ function fingerprint(parts: string[]): string {
  * Deposit funds — credits bettor_available + platform_custody.
  * Uses the canonical financial ledger.
  */
-export async function deposit(bettorId: string, amountCentimes: bigint, referenceId?: string) {
-  const bettorAcct = await getOrCreateBettorAvailableAccount(bettorId);
-  const custodyAcct = await getOrCreateCustodyAccount();
+export async function deposit(bettorId: string, amountCentimes: bigint, referenceId?: string, tx?: any) {
+  const bettorAcct = await getOrCreateBettorAvailableAccount(bettorId, tx);
+  const custodyAcct = await getOrCreateCustodyAccount(tx);
 
   const result = await postFinancialTransaction({
     idempotencyKey: `deposit:${bettorId}:${referenceId ?? amountCentimes.toString()}`,
@@ -85,18 +90,18 @@ export async function deposit(bettorId: string, amountCentimes: bigint, referenc
       { accountId: custodyAcct.id, direction: "debit", amountCentimes },
       { accountId: bettorAcct.id, direction: "credit", amountCentimes },
     ],
-  });
+  }, tx);
 
-  await syncWalletFromAccounts(bettorId);
+  await syncWalletFromAccounts(bettorId, tx);
   return result;
 }
 
 /**
  * Withdraw funds — debits bettor_available + credits platform_custody.
  */
-export async function withdraw(bettorId: string, amountCentimes: bigint, referenceId?: string) {
-  const bettorAcct = await getOrCreateBettorAvailableAccount(bettorId);
-  const custodyAcct = await getOrCreateCustodyAccount();
+export async function withdraw(bettorId: string, amountCentimes: bigint, referenceId?: string, tx?: any) {
+  const bettorAcct = await getOrCreateBettorAvailableAccount(bettorId, tx);
+  const custodyAcct = await getOrCreateCustodyAccount(tx);
 
   const result = await postFinancialTransaction({
     idempotencyKey: `withdraw:${bettorId}:${referenceId ?? amountCentimes.toString()}`,
@@ -110,9 +115,9 @@ export async function withdraw(bettorId: string, amountCentimes: bigint, referen
       { accountId: bettorAcct.id, direction: "debit", amountCentimes },
       { accountId: custodyAcct.id, direction: "credit", amountCentimes },
     ],
-  });
+  }, tx);
 
-  await syncWalletFromAccounts(bettorId);
+  await syncWalletFromAccounts(bettorId, tx);
   return result;
 }
 
@@ -120,9 +125,9 @@ export async function withdraw(bettorId: string, amountCentimes: bigint, referen
  * Reserve funds for a bet (available → reserved).
  * Throws if insufficient balance.
  */
-export async function reserveForBet(bettorId: string, stakeCentimes: bigint, betOrderId: string) {
-  const availableAcct = await getOrCreateBettorAvailableAccount(bettorId);
-  const reservedAcct = await getOrCreateBettorReservedAccount(bettorId);
+export async function reserveForBet(bettorId: string, stakeCentimes: bigint, betOrderId: string, tx?: any) {
+  const availableAcct = await getOrCreateBettorAvailableAccount(bettorId, tx);
+  const reservedAcct = await getOrCreateBettorReservedAccount(bettorId, tx);
 
   const result = await postFinancialTransaction({
     idempotencyKey: `bet_reserve:${betOrderId}`,
@@ -136,18 +141,18 @@ export async function reserveForBet(bettorId: string, stakeCentimes: bigint, bet
       { accountId: availableAcct.id, direction: "debit", amountCentimes: stakeCentimes },
       { accountId: reservedAcct.id, direction: "credit", amountCentimes: stakeCentimes },
     ],
-  });
+  }, tx);
 
-  await syncWalletFromAccounts(bettorId);
+  await syncWalletFromAccounts(bettorId, tx);
   return result;
 }
 
 /**
  * Release reserved funds back to available (bet cancelled while unmatched).
  */
-export async function releaseFromBet(bettorId: string, stakeCentimes: bigint, betOrderId: string) {
-  const availableAcct = await getOrCreateBettorAvailableAccount(bettorId);
-  const reservedAcct = await getOrCreateBettorReservedAccount(bettorId);
+export async function releaseFromBet(bettorId: string, stakeCentimes: bigint, betOrderId: string, tx?: any) {
+  const availableAcct = await getOrCreateBettorAvailableAccount(bettorId, tx);
+  const reservedAcct = await getOrCreateBettorReservedAccount(bettorId, tx);
 
   const result = await postFinancialTransaction({
     idempotencyKey: `bet_release:${betOrderId}`,
@@ -161,18 +166,19 @@ export async function releaseFromBet(bettorId: string, stakeCentimes: bigint, be
       { accountId: reservedAcct.id, direction: "debit", amountCentimes: stakeCentimes },
       { accountId: availableAcct.id, direction: "credit", amountCentimes: stakeCentimes },
     ],
-  });
+  }, tx);
 
-  await syncWalletFromAccounts(bettorId);
+  await syncWalletFromAccounts(bettorId, tx);
   return result;
 }
 
 /**
- * Move matched funds from reserved → custody (the pot is held by the platform).
+ * Move a matched stake from the bettor's reserved liability into the pool
+ * liability. Custody remains an asset and is not debited until a real payout.
  */
-export async function matchBetFunds(bettorId: string, stakeCentimes: bigint, betOrderId: string) {
-  const reservedAcct = await getOrCreateBettorReservedAccount(bettorId);
-  const custodyAcct = await getOrCreateCustodyAccount();
+export async function matchBetFunds(bettorId: string, stakeCentimes: bigint, betOrderId: string, tx?: any) {
+  const reservedAcct = await getOrCreateBettorReservedAccount(bettorId, tx);
+  const bettingPoolAcct = await getOrCreateBettingPoolAccount(tx);
 
   const result = await postFinancialTransaction({
     idempotencyKey: `bet_match:${betOrderId}`,
@@ -184,11 +190,11 @@ export async function matchBetFunds(bettorId: string, stakeCentimes: bigint, bet
     createdBy: "system",
     entries: [
       { accountId: reservedAcct.id, direction: "debit", amountCentimes: stakeCentimes },
-      { accountId: custodyAcct.id, direction: "credit", amountCentimes: stakeCentimes },
+      { accountId: bettingPoolAcct.id, direction: "credit", amountCentimes: stakeCentimes },
     ],
-  });
+  }, tx);
 
-  await syncWalletFromAccounts(bettorId);
+  await syncWalletFromAccounts(bettorId, tx);
   return result;
 }
 
@@ -207,6 +213,7 @@ export async function settleWin(
   commissionCentimes: bigint,
   betOrderId: string,
   marketId: string,
+  tx?: any,
 ) {
   // Net payout = stake + winnings - commission
   const netPayout = stakeCentimes + winningsCentimes - commissionCentimes;
@@ -215,20 +222,20 @@ export async function settleWin(
     throw new Error("Net payout must be positive");
   }
 
-  const custodyAcct = await getOrCreateCustodyAccount();
-  const bettorAcct = await getOrCreateBettorAvailableAccount(bettorId);
+  const bettingPoolAcct = await getOrCreateBettingPoolAccount(tx);
+  const bettorAcct = await getOrCreateBettorAvailableAccount(bettorId, tx);
 
   const entries = [
-    // Debit custody: release the pot to the winner
-    { accountId: custodyAcct.id, direction: "debit", amountCentimes: netPayout },
+    // Retire the matched pool liability as it is paid or earned.
+    { accountId: bettingPoolAcct.id, direction: "debit", amountCentimes: netPayout },
     // Credit bettor available: winner receives net payout
     { accountId: bettorAcct.id, direction: "credit", amountCentimes: netPayout },
   ];
 
   // If there's commission, it goes to platform_revenue as a separate credit
   if (commissionCentimes > 0n) {
-    const revenueAcct = await getOrCreateRevenueAccount();
-    // Debit custody for the commission portion too (total debit = netPayout + commission = stake + winnings)
+    const revenueAcct = await getOrCreateRevenueAccount(tx);
+    // Total pool debit = winner payout + commission = both matched stakes.
     entries[0].amountCentimes = netPayout + commissionCentimes;
     // Credit revenue for the commission
     entries.push({ accountId: revenueAcct.id, direction: "credit", amountCentimes: commissionCentimes });
@@ -251,9 +258,9 @@ export async function settleWin(
     }),
     createdBy: "system",
     entries,
-  });
+  }, tx);
 
-  await syncWalletFromAccounts(bettorId);
+  await syncWalletFromAccounts(bettorId, tx);
   return result;
 }
 
@@ -266,25 +273,27 @@ export async function settleLoss(
   stakeCentimes: bigint,
   betOrderId: string,
   marketId: string,
+  tx?: any,
 ) {
   // No financial transaction needed — the stake was already moved to custody
   // during BET_MATCH. The loss is recorded in the BetOrder's settleOutcome.
   // We do NOT create a zero-value AccountEntry (per GLM-INSTRUCTIONS.md §2).
-  await syncWalletFromAccounts(bettorId);
+  await syncWalletFromAccounts(bettorId, tx);
   return { ok: true };
 }
 
 /**
- * Refund a matched bet (market cancelled): return the stake from custody to available.
+ * Refund a matched bet (market cancelled): release the stake from the pool.
  */
 export async function refundBet(
   bettorId: string,
   stakeCentimes: bigint,
   betOrderId: string,
   marketId: string,
+  tx?: any,
 ) {
-  const custodyAcct = await getOrCreateCustodyAccount();
-  const bettorAcct = await getOrCreateBettorAvailableAccount(bettorId);
+  const bettingPoolAcct = await getOrCreateBettingPoolAccount(tx);
+  const bettorAcct = await getOrCreateBettorAvailableAccount(bettorId, tx);
 
   const result = await postFinancialTransaction({
     idempotencyKey: `bet_refund:${betOrderId}`,
@@ -295,12 +304,12 @@ export async function refundBet(
     metadata: JSON.stringify({ action: "refund", betOrderId, marketId, stake: stakeCentimes.toString() }),
     createdBy: "system",
     entries: [
-      { accountId: custodyAcct.id, direction: "debit", amountCentimes: stakeCentimes },
+      { accountId: bettingPoolAcct.id, direction: "debit", amountCentimes: stakeCentimes },
       { accountId: bettorAcct.id, direction: "credit", amountCentimes: stakeCentimes },
     ],
-  });
+  }, tx);
 
-  await syncWalletFromAccounts(bettorId);
+  await syncWalletFromAccounts(bettorId, tx);
   return result;
 }
 

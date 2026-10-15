@@ -14,17 +14,22 @@ import { logBettingAction } from "@/lib/betting/audit";
 
 export async function POST(req: NextRequest) {
   try {
+    if (Number(req.headers.get("content-length") ?? 0) > 16 * 1024) {
+      return NextResponse.json({ error: "Done demann lan twò gwo." }, { status: 413 });
+    }
     const body = await req.json();
     const { email, password } = body;
-    if (!email || !password) {
+    if (typeof email !== "string" || typeof password !== "string" || !email || !password || password.length > 256) {
       return NextResponse.json({ error: "Imèl ak modpas nesesè." }, { status: 400 });
     }
 
     const emailNorm = email.toLowerCase().trim();
+    if (emailNorm.length > 254) return NextResponse.json({ error: "Imèl oswa modpas la pa kòrèk." }, { status: 401 });
     const ip = clientIp(req);
 
     // Rate limit: 10/min per (ip, email) combo — brute-force protection.
-    const rl = rateLimit(`login:${ip}:${emailNorm}`, emailNorm, LIMITS.LOGIN.limit, LIMITS.LOGIN.windowMs);
+    const rl = await rateLimit(`login:${ip}:${emailNorm}`, emailNorm, LIMITS.LOGIN.limit, LIMITS.LOGIN.windowMs);
+    if (!rl.available) return NextResponse.json({ error: "Sèvis la pa disponib kounye a." }, { status: 503 });
     if (!rl.allowed) {
       return NextResponse.json(
         { error: "Trop eseye. Kont ou oswa IP ou bloke pou kèk minit." },
@@ -68,6 +73,7 @@ export async function POST(req: NextRequest) {
         { status: 503 },
       );
     }
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    console.error("[betting/login] request failed:", e?.message);
+    return NextResponse.json({ error: "Erè sèvè. Eseye ankò pita." }, { status: 500 });
   }
 }

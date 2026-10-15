@@ -63,17 +63,36 @@ export async function POST(req: NextRequest) {
   }
 
   // Rate limit: 20 bets/min per bettor.
-  const rl = rateLimit("bet_place", bettor.id, LIMITS.BET_PLACE.limit, LIMITS.BET_PLACE.windowMs);
+  const rl = await rateLimit("bet_place", bettor.id, LIMITS.BET_PLACE.limit, LIMITS.BET_PLACE.windowMs);
+  if (!rl.available) return NextResponse.json({ error: "Sèvis la pa disponib kounye a." }, { status: 503 });
   if (!rl.allowed) {
     return NextResponse.json({ error: "Trop demann pariyaj. Eseye ankò pita." }, { status: 429 });
   }
 
   try {
-    const body = await req.json();
-    const { marketId, selectionId, stakeCentimes: stakeStr, idempotencyKey } = body;
-    const stakeCentimes = BigInt(stakeStr ?? 0);
+    if (Number(req.headers.get("content-length") ?? 0) > 8 * 1024) {
+      return NextResponse.json({ error: "Demann lan twò gwo." }, { status: 413 });
+    }
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: "Done pariyaj la pa valid." }, { status: 400 });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Done pariyaj la pa valid." }, { status: 400 });
+    }
+    const { marketId, selectionId, stakeCentimes: stakeStr, idempotencyKey } = body as Record<string, unknown>;
+    if (
+      typeof marketId !== "string" || typeof selectionId !== "string" ||
+      typeof stakeStr !== "string" || !/^\d{1,12}$/.test(stakeStr) ||
+      typeof idempotencyKey !== "string" || idempotencyKey.length < 8 || idempotencyKey.length > 128
+    ) {
+      return NextResponse.json({ error: "Done pariyaj la pa valid." }, { status: 400 });
+    }
+    const stakeCentimes = BigInt(stakeStr);
 
-    if (!marketId || !selectionId || stakeCentimes <= 0n) {
+    if (stakeCentimes <= 0n) {
       return NextResponse.json({ error: "Done pariyaj la pa konplè." }, { status: 400 });
     }
 
@@ -81,61 +100,71 @@ export async function POST(req: NextRequest) {
     if (idempotencyKey) {
       const existing = await db.betOrder.findUnique({ where: { idempotencyKey } });
       if (existing) {
+        if (
+          existing.bettorId !== bettor.id || existing.marketId !== marketId ||
+          existing.selectionId !== selectionId || existing.stakeCentimes !== stakeCentimes
+        ) {
+          return NextResponse.json({ error: "Kle idempotans sa a deja sèvi." }, { status: 409 });
+        }
         return NextResponse.json({
           ok: true, betId: existing.id, status: existing.status, idempotent: true,
         });
       }
     }
 
-    // Validate the market is OPEN.
-    const market = await db.bettingMarket.findUnique({
-      where: { id: marketId },
-      include: { selections: true },
-    });
-    if (!market || market.status !== "OPEN") {
-      return NextResponse.json({ error: "Mache a pa louvri pou pariyaj." }, { status: 409 });
-    }
-
-    // Validate the selection belongs to the market.
-    const selection = market.selections.find((s) => s.id === selectionId);
-    if (!selection) {
-      return NextResponse.json({ error: "Seleksyon sa a pa nan mache a." }, { status: 400 });
-    }
-
-    // Validate the stake is an enabled pool (no arbitrary amounts).
-    const pool = await db.stakePool.findFirst({
-      where: { amountCentimes: stakeCentimes, enabled: true },
-    });
-    if (!pool) {
-      return NextResponse.json({ error: "Montan sa a pa pèmèt." }, { status: 400 });
-    }
-
-    // Create the bet order first (inside a tx for the status).
-    const betOrder = await db.betOrder.create({
-      data: {
-        bettorId: bettor.id,
-        marketId,
-        selectionId,
-        stakeCentimes,
-        status: "OPEN",
-        idempotencyKey: idempotencyKey ?? null,
-      },
-    });
-
-    // Reserve funds via the canonical ledger (no LedgerEntry writes).
+    let betOrder;
     try {
-      await reserveForBet(bettor.id, stakeCentimes, betOrder.id);
+      betOrder = await db.$transaction(async (tx) => {
+        const market = await tx.bettingMarket.findUnique({
+          where: { id: marketId },
+          include: { selections: true },
+        });
+        if (!market || market.status !== "OPEN") {
+          throw Object.assign(new Error("MARKET_CLOSED"), { statusCode: 409 });
+        }
+        const lockedMarket = await tx.bettingMarket.updateMany({
+          where: { id: marketId, status: "OPEN" },
+          data: { status: "OPEN" },
+        });
+        if (lockedMarket.count !== 1) {
+          throw Object.assign(new Error("MARKET_CLOSED"), { statusCode: 409 });
+        }
+        if (!market.selections.some((s) => s.id === selectionId)) {
+          throw Object.assign(new Error("INVALID_SELECTION"), { statusCode: 400 });
+        }
+        const pool = await tx.stakePool.findFirst({
+          where: { amountCentimes: stakeCentimes, enabled: true },
+        });
+        if (!pool) throw Object.assign(new Error("INVALID_STAKE"), { statusCode: 400 });
+
+        const created = await tx.betOrder.create({
+          data: { bettorId: bettor.id, marketId, selectionId, stakeCentimes, status: "OPEN", idempotencyKey },
+        });
+        await reserveForBet(bettor.id, stakeCentimes, created.id, tx);
+        return created;
+      });
     } catch (e: any) {
-      // If reservation fails (insufficient balance), cancel the bet order.
-      await db.betOrder.update({
-        where: { id: betOrder.id },
-        data: { status: "CANCELLED" },
-      }).catch(() => {});
-      const msg = e?.message ?? "Erè sèvè.";
+      if (String(e?.code ?? "").includes("P2002") && idempotencyKey) {
+        const existing = await db.betOrder.findUnique({ where: { idempotencyKey } });
+        if (existing?.bettorId === bettor.id && existing.marketId === marketId &&
+            existing.selectionId === selectionId && existing.stakeCentimes === stakeCentimes) {
+          return NextResponse.json({ ok: true, betId: existing.id, status: existing.status, idempotent: true });
+        }
+        return NextResponse.json({ error: "Kle idempotans sa a deja sèvi." }, { status: 409 });
+      }
+      if (e?.statusCode) {
+        const errors: Record<number, string> = {
+          400: e.message === "INVALID_SELECTION" ? "Seleksyon sa a pa nan mache a." : "Montan sa a pa pèmèt.",
+          409: "Mache a pa louvri pou pariyaj.",
+        };
+        return NextResponse.json({ error: errors[e.statusCode] }, { status: e.statusCode });
+      }
+      const msg = e?.message ?? "";
       if (msg.includes("Solde disponib") || msg.includes("Insufficient")) {
         return NextResponse.json({ error: "Solde disponib ou pa ase." }, { status: 402 });
       }
-      return NextResponse.json({ error: msg }, { status: 500 });
+      console.error("[betting/bets] placement failed:", msg);
+      return NextResponse.json({ error: "Erè sèvè." }, { status: 500 });
     }
 
     await logBettingAction({
@@ -166,10 +195,11 @@ export async function POST(req: NextRequest) {
         : "N ap chèche yon parye opoze pou ou...",
     });
   } catch (e: any) {
-    const msg = e?.message ?? "Erè sèvè.";
+    const msg = e?.message ?? "";
     if (msg.includes("Solde disponib")) {
       return NextResponse.json({ error: "Solde disponib ou pa ase." }, { status: 402 });
     }
-    return NextResponse.json({ error: msg }, { status: 500 });
+    console.error("[betting/bets] request failed:", msg);
+    return NextResponse.json({ error: "Erè sèvè." }, { status: 500 });
   }
 }

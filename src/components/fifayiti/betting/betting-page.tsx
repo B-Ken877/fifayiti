@@ -16,12 +16,10 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useAppStore } from "@/store/app-store";
 import {
-  Flame, Wallet, ArrowLeft, Zap, Check, X, Loader2, Clock, Users, Trophy, LogIn,
-  ArrowDownToLine, TrendingUp,
+  Flame, Wallet, Zap, Check, X, Loader2, Clock, Users, Trophy, LogIn,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatHtg } from "@/lib/betting/types";
-import { BrandMark } from "../brand-mark";
 
 interface ActiveMarket {
   active: boolean;
@@ -171,87 +169,42 @@ export function BettingPage() {
   const isLive = market?.active && m?.status === "OPEN";
 
   return (
-    <div className="min-h-screen bg-[#064E2A] pb-20">
-      {/* ═══ HEADER — normal FIFAYITI header + PARIAJ label (no tagline) ═══ */}
-      <div className="sticky top-0 z-30 bg-[#084C2A] text-white border-b border-fifayiti-line">
-        <div className="max-w-[1400px] mx-auto px-4 lg:px-6">
-          <div className="flex items-center justify-between" style={{ height: 60 }}>
-            <button
-              onClick={() => setView("home")}
-              className="flex items-center cursor-pointer text-left"
-              aria-label="FIFAYITI PARIAJ"
-            >
-              <BrandMark size="compact" variant="white" showTagline={false} />
-              <span
-                className="ml-2 font-extrabold tracking-tight"
-                style={{
-                  fontSize: 18,
-                  color: "#F4C400",
-                  letterSpacing: "-0.02em",
-                  fontFamily: "var(--font-archivo), var(--font-manrope), sans-serif",
-                }}
-              >
-                PARIAJ
-              </span>
-            </button>
-
-            {/* Right side: inline wallet (authenticated) or login button */}
-            {bettor?.authenticated ? (
-              <button
-                onClick={() => setView("betting-wallet")}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 transition"
-                title="Wè poche ou"
-              >
-                <Wallet size={16} className="text-[#F4C400]" />
-                <span className="text-sm font-bold text-white tnum">{formatHtg(walletAvail)}</span>
-              </button>
-            ) : (
-              <button
-                onClick={() => setView("betting-login")}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#F4C400] hover:brightness-105 transition"
-              >
-                <LogIn size={15} className="text-[#064E2A]" />
-                <span className="text-sm font-extrabold text-[#064E2A]">Konekte</span>
-              </button>
-            )}
+    <div className="min-h-screen bg-[#F3F6F4] pb-20">
+      <section className="bg-[#064E2A] text-white">
+        <div className="max-w-[1400px] mx-auto px-4 lg:px-6 py-7 lg:py-9 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
+          <div>
+            <div className="flex items-center gap-2 text-[#F4C400] text-[11px] font-extrabold uppercase tracking-[0.16em]">
+              <Flame size={14} /> FIFAYITI PARIAJ
+            </div>
+            <h1 className="mt-2 text-2xl sm:text-3xl font-black tracking-tight">Predi match la. Sipòte ekip ou.</h1>
+            <p className="mt-1.5 text-sm text-white/70">Chwazi yon rezilta epi jwenn yon moun ki pran lòt bò a.</p>
           </div>
-        </div>
-
-        {/* ═══ COMPACT WALLET STRIP — visible immediately after login ═══
-            Shows available + in-play + a small deposit button. Compact,
-            single-row, doesn't distract from the betting experience. */}
-        {bettor?.authenticated && (
-          <div className="max-w-[1400px] mx-auto px-4 lg:px-6 pb-2.5">
-            <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-black/30 border border-white/10">
-              {/* Available */}
-              <div className="flex items-center gap-1.5">
-                <Wallet size={12} className="text-[#F4C400]" />
-                <span className="text-[9px] text-white/50 uppercase tracking-wider">Disponib</span>
-                <span className="text-xs font-bold text-white tnum">{formatHtg(walletAvail)}</span>
-              </div>
-              <div className="w-px h-4 bg-white/15" />
-              {/* In play */}
-              <div className="flex items-center gap-1.5">
-                <TrendingUp size={12} className="text-[#F4C400]" />
-                <span className="text-[9px] text-white/50 uppercase tracking-wider">Nan jwèt</span>
-                <span className="text-xs font-bold text-white tnum">{formatHtg(walletReserved)}</span>
-              </div>
-              <div className="flex-1" />
-              {/* Compact deposit button */}
-              <button
-                onClick={() => setView("betting-wallet")}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#F4C400]/15 hover:bg-[#F4C400]/25 border border-[#F4C400]/30 transition"
-                title="Depoze lajan"
-              >
-                <ArrowDownToLine size={11} className="text-[#F4C400]" />
-                <span className="text-[10px] font-bold text-[#F4C400]">Depoze</span>
+          {bettor?.authenticated ? (
+            <div className="flex items-center">
+              <button onClick={() => setView("betting-wallet")} className="px-4 py-2.5 rounded-lg bg-[#F4C400] text-[#064E2A] text-sm font-extrabold hover:brightness-105 transition">
+                Wè pòch mwen
               </button>
             </div>
-          </div>
-        )}
-      </div>
+          ) : (
+            <button onClick={() => setView("betting-login")} className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-lg bg-[#F4C400] text-[#064E2A] text-sm font-extrabold hover:brightness-105 transition">
+              <LogIn size={16} /> Konekte pou parye
+            </button>
+          )}
+        </div>
+      </section>
 
-      <div className="max-w-[1400px] mx-auto px-4 pt-4 lg:grid lg:grid-cols-[1fr_360px] lg:gap-5">
+      {bettor?.authenticated && (
+        <div className="max-w-[1400px] mx-auto px-4 lg:px-6 pt-4">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl bg-white border border-[#E4E7EC] px-4 py-3 shadow-sm">
+            <span className="text-xs text-[#667085]">Disponib <strong className="ml-1 text-[#101828] tnum">{formatHtg(walletAvail)}</strong></span>
+            <span className="hidden sm:block w-px h-4 bg-[#E4E7EC]" />
+            <span className="text-xs text-[#667085]">Nan jwèt <strong className="ml-1 text-[#101828] tnum">{formatHtg(walletReserved)}</strong></span>
+            <button onClick={() => setView("betting-wallet")} className="sm:ml-auto text-xs font-bold text-[#116B3A] hover:underline">Jere pòch mwen</button>
+          </div>
+        </div>
+      )}
+
+      <div className="max-w-[1400px] mx-auto px-4 pt-5 lg:px-6 lg:grid lg:grid-cols-[1fr_360px] lg:gap-5">
         <div className="space-y-4">
           {/* ═══ LIVE MATCH SCORE ═══ */}
           {match && (
@@ -408,31 +361,19 @@ export function BettingPage() {
               </div>
             </div>
           ) : (
-            <div className="rounded-xl overflow-hidden bg-[#064E2A]">
-              {/* Full promotional image — shown in full (not cropped) */}
-              <img
-                src="/pariaj-bg.png"
-                alt="FIFAYITI PARIAJ — Pariez. Ganyen. Fè Ayiti Fye!"
-                className="w-full h-auto block"
-                style={{ aspectRatio: "853 / 1844", maxHeight: "70vh", objectFit: "cover", objectPosition: "top" }}
-              />
-              {/* Status overlay at the bottom of the image */}
-              <div className="px-5 py-4 bg-gradient-to-t from-[#064E2A] via-[#064E2A]/90 to-transparent -mt-16 relative">
-                <div className="text-center">
-                  <div className="w-12 h-12 rounded-2xl bg-[#F4C400]/15 backdrop-blur-sm flex items-center justify-center mx-auto mb-3 border border-[#F4C400]/30">
-                    <Flame size={22} className="text-[#F4C400]" />
-                  </div>
-                  <p className="text-sm font-extrabold text-white">Pa gen mache pariaj aktif kounye a</p>
-                  <p className="text-[11px] text-white/60 mt-1">Tounen lè operatè a louvri yon mache.</p>
-                </div>
+            <div className="rounded-2xl bg-white border border-[#E4E7EC] shadow-sm p-6 sm:p-9 text-center">
+              <div className="w-12 h-12 rounded-xl bg-[#F4C400]/15 flex items-center justify-center mx-auto mb-4">
+                <Clock size={21} className="text-[#8A6B00]" />
               </div>
+              <p className="text-base font-extrabold text-[#101828]">Pa gen mache ki ouvè kounye a</p>
+              <p className="max-w-md mx-auto text-sm text-[#667085] mt-2">Lè yon mache ouvè, ou ap jwenn prediksyon ki disponib la a. Ou ka retounen pita pou suiv match yo.</p>
             </div>
           )}
 
           {/* ═══ YOUR POSITIONS ═══ */}
           {bettor?.authenticated && bets.length > 0 && (
             <div>
-              <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-1.5">
+              <h3 className="text-sm font-bold text-[#101828] mb-2 flex items-center gap-1.5">
                 <Trophy size={14} className="text-[#F4C400]" /> Parye ou yo
               </h3>
               <div className="space-y-2">

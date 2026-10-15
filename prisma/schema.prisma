@@ -737,7 +737,7 @@ model SettlementTransaction {
 //   platform_settlement — clearing account during settlement
 model Account {
   id              String   @id @default(cuid())
-  type            String                     // platform_custody | platform_revenue | platform_settlement | bettor_available | bettor_reserved | team_support | player_earnings
+  type            String                     // platform_custody | platform_revenue | platform_settlement | platform_betting_pool | bettor_available | bettor_reserved | team_support | player_earnings
   normalBalance   String   @default("CREDIT")  // DEBIT or CREDIT — controls signed delta interpretation
   bettorId        String?                    // null for non-bettor accounts
   teamId          String?                    // set for team_support accounts

@@ -137,14 +137,18 @@ const demoProvider: PaymentProvider = {
 export function getProvider(name: "moncash" | "natcash" | "demo"): PaymentProvider {
   if (name === "moncash") return moncashProvider;
   if (name === "natcash") return natcashProvider;
-  return demoProvider;
+  if (name === "demo") return demoProvider;
+  throw new Error("Unsupported payment provider");
 }
 
 /** Whether a provider is currently configured (env vars present). */
 export function providerStatus(): { moncash: boolean; natcash: boolean; demo: boolean } {
   return {
-    moncash: !!process.env.MONCASH_API_KEY && !!process.env.MONCASH_SECRET,
-    natcash: !!process.env.NATCASH_API_KEY && !!process.env.NATCASH_SECRET,
+    // Both adapters intentionally remain disabled until their create and
+    // signature-verification implementations are real. Presence of secrets
+    // alone must never make a stub look like a production payment rail.
+    moncash: false,
+    natcash: false,
     demo: process.env.NODE_ENV !== "production", // demo only in dev/test
   };
 }

@@ -20,7 +20,7 @@
 //      - Reopen the market if appropriate (or cancel it)
 
 import { db } from "@/lib/db";
-import { settleWin, settleLoss, refundBet } from "./wallet";
+import { settleWin, settleLoss, refundBet, releaseFromBet } from "./wallet";
 import { computeCommission } from "./types";
 
 export interface SettlementResult {
@@ -109,6 +109,13 @@ async function settleMarket(marketId: string, triggeringEvent: any): Promise<Set
       if (market.status === "SETTLED" || market.status === "CANCELLED") {
         return { marketId, outcome: "no_action", reason: `already ${market.status}` };
       }
+      const lockedMarket = await tx.bettingMarket.updateMany({
+        where: { id: marketId, status: market.status },
+        data: { status: market.status },
+      });
+      if (lockedMarket.count !== 1) {
+        return { marketId, outcome: "no_action", reason: "market changed concurrently" };
+      }
 
       // ── IDEMPOTENCY GUARD ────────────────────────────────────────────
       // Try to insert a SettlementTransaction row. If it exists already
@@ -152,6 +159,7 @@ async function settleMarket(marketId: string, triggeringEvent: any): Promise<Set
 
         let refundedCount = 0;
         for (const bet of matchedBets) {
+          await refundBet(bet.bettorId, bet.stakeCentimes, bet.id, marketId, tx);
           await tx.betOrder.update({
             where: { id: bet.id },
             data: {
@@ -161,33 +169,45 @@ async function settleMarket(marketId: string, triggeringEvent: any): Promise<Set
               payoutCentimes: bet.stakeCentimes,
             },
           });
-          // Refund the stake to the bettor's available balance.
-          const wallet = await tx.wallet.findUnique({ where: { bettorId: bet.bettorId } });
-          if (wallet) {
-            await tx.wallet.update({
-              where: { bettorId: bet.bettorId },
-              data: { availableCentimes: wallet.availableCentimes + bet.stakeCentimes },
-            });
-            await tx.ledgerEntry.create({
-              data: {
-                bettorId: bet.bettorId,
-                amountCentimes: bet.stakeCentimes,
-                type: "BET_REFUND",
-                referenceType: "bet_order",
-                referenceId: bet.id,
-                balanceAfterCentimes: wallet.availableCentimes + wallet.reservedCentimes + bet.stakeCentimes,
-                metadata: JSON.stringify({ action: "refund_match_abandoned", marketId }),
-              },
-            });
-          }
           refundedCount++;
         }
+        await releaseOpenBets(tx, marketId);
+        await tx.settlementTransaction.updateMany({
+          where: { marketId, settleEventId: triggeringEvent.id },
+          data: { outcome: "refunded", refundedCount },
+        });
         return { marketId, outcome: "refunded", refundedCount, reason: "match abandoned" };
       }
 
       // ── Compute the winning selection key ──
       const winningKey = computeWinningSelection(market, triggeringEvent);
       if (!winningKey) {
+        // A draw in a match-winner market has no winning side. Return every
+        // matched stake through the canonical ledger rather than leaving the
+        // settlement permanently stuck behind its idempotency row.
+        if (market.template.code === "MATCH_WINNER" && triggeringEvent.eventType === "FEN_MATCH") {
+          const drawBets = await tx.betOrder.findMany({ where: { marketId, status: "MATCHED" } });
+          for (const bet of drawBets) {
+            await refundBet(bet.bettorId, bet.stakeCentimes, bet.id, marketId, tx);
+            await tx.betOrder.update({
+              where: { id: bet.id },
+              data: { status: "MARKET_CANCELLED", settledAt: new Date(), settleOutcome: "REFUND", payoutCentimes: bet.stakeCentimes },
+            });
+          }
+          await releaseOpenBets(tx, marketId);
+          await tx.bettingMarket.update({
+            where: { id: marketId },
+            data: { status: "SETTLED", settleEventId: triggeringEvent.id, settleOutcome: "REFUND", settledAt: new Date() },
+          });
+          await tx.settlementTransaction.updateMany({
+            where: { marketId, settleEventId: triggeringEvent.id },
+            data: { outcome: "refunded", refundedCount: drawBets.length },
+          });
+          return { marketId, outcome: "refunded", refundedCount: drawBets.length, reason: "match winner was a draw" };
+        }
+        // Do not commit an idempotency row for an event that cannot resolve
+        // this market; a later corrected event must remain processable.
+        await tx.settlementTransaction.deleteMany({ where: { marketId, settleEventId: triggeringEvent.id } });
         return { marketId, outcome: "no_action", reason: "no winner determined" };
       }
 
@@ -220,8 +240,6 @@ async function settleMarket(marketId: string, triggeringEvent: any): Promise<Set
           const pot = bet.stakeCentimes * 2n; // both stakes
           const commission = computeCommission(pot);
           const payout = pot - commission;
-          const winnings = payout - bet.stakeCentimes; // net profit
-
           await tx.betOrder.update({
             where: { id: bet.id },
             data: {
@@ -232,46 +250,9 @@ async function settleMarket(marketId: string, triggeringEvent: any): Promise<Set
             },
           });
 
-          // Credit the winner.
-          const wallet = await tx.wallet.findUnique({ where: { bettorId: bet.bettorId } });
-          if (wallet) {
-            await tx.wallet.update({
-              where: { bettorId: bet.bettorId },
-              data: { availableCentimes: wallet.availableCentimes + payout },
-            });
-            await tx.ledgerEntry.create({
-              data: {
-                bettorId: bet.bettorId,
-                amountCentimes: payout,
-                type: "BET_SETTLE_WIN",
-                referenceType: "bet_order",
-                referenceId: bet.id,
-                balanceAfterCentimes: wallet.availableCentimes + wallet.reservedCentimes + payout,
-                metadata: JSON.stringify({
-                  action: "settle_win",
-                  marketId,
-                  stake: bet.stakeCentimes.toString(),
-                  winnings: winnings.toString(),
-                  commission: commission.toString(),
-                  payout: payout.toString(),
-                }),
-              },
-            });
-            // Record the commission separately.
-            if (commission > 0n) {
-              await tx.ledgerEntry.create({
-                data: {
-                  bettorId: bet.bettorId,
-                  amountCentimes: -commission,
-                  type: "COMMISSION",
-                  referenceType: "bet_order",
-                  referenceId: bet.id,
-                  balanceAfterCentimes: wallet.availableCentimes + wallet.reservedCentimes + payout,
-                  metadata: JSON.stringify({ action: "commission", marketId, commission: commission.toString() }),
-                },
-              });
-            }
-          }
+          // The opposing stake is gross winnings; settleWin posts the net
+          // payout and platform commission as balanced ledger entries.
+          await settleWin(bet.bettorId, bet.stakeCentimes, bet.stakeCentimes, commission, bet.id, marketId, tx);
           winnerCount++;
         } else {
           // Loser forfeits (funds already removed from wallet at match time).
@@ -284,20 +265,14 @@ async function settleMarket(marketId: string, triggeringEvent: any): Promise<Set
               payoutCentimes: 0n,
             },
           });
-          await tx.ledgerEntry.create({
-            data: {
-              bettorId: bet.bettorId,
-              amountCentimes: 0n,
-              type: "BET_SETTLE_LOSS",
-              referenceType: "bet_order",
-              referenceId: bet.id,
-              balanceAfterCentimes: 0n, // read wallet below
-              metadata: JSON.stringify({ action: "settle_loss", marketId, stake: bet.stakeCentimes.toString() }),
-            },
-          });
+          await settleLoss(bet.bettorId, bet.stakeCentimes, bet.id, marketId, tx);
           loserCount++;
         }
       }
+
+      // Once the market resolves, unmatched orders are no longer executable.
+      // Release their reserved funds in this same transaction.
+      await releaseOpenBets(tx, marketId);
 
       // ── Finalize the market + the SettlementTransaction record ──
       await tx.bettingMarket.update({
@@ -328,6 +303,21 @@ async function settleMarket(marketId: string, triggeringEvent: any): Promise<Set
   } catch (e: any) {
     console.error("[settlement] settleMarket failed:", e?.message);
     return { marketId, outcome: "no_action", reason: e?.message };
+  }
+}
+
+async function releaseOpenBets(tx: any, marketId: string) {
+  const openBets = await tx.betOrder.findMany({
+    where: { marketId, status: { in: ["OPEN", "RESERVED"] } },
+  });
+  for (const bet of openBets) {
+    const claimed = await tx.betOrder.updateMany({
+      where: { id: bet.id, status: bet.status },
+      data: { status: "CANCELLED" },
+    });
+    if (claimed.count === 1) {
+      await releaseFromBet(bet.bettorId, bet.stakeCentimes, bet.id, tx);
+    }
   }
 }
 
@@ -430,69 +420,26 @@ export async function onOfficialEventCancelled(eventId: string): Promise<Settlem
  * Refund a settled market (event was cancelled) and reopen it.
  */
 async function refundAndReopenMarket(marketId: string, event: any): Promise<SettlementResult> {
-  try {
-    return await db.$transaction(async (tx) => {
-      const market = await tx.bettingMarket.findUnique({
-        where: { id: marketId },
-        include: { selections: true },
-      });
-      if (!market) return { marketId, outcome: "no_action", reason: "not found" };
-
-      // Refund all settled bets.
-      const settledBets = await tx.betOrder.findMany({
-        where: { marketId, status: "SETTLED" },
-      });
-
-      let refundedCount = 0;
-      for (const bet of settledBets) {
-        // Refund the original stake (losers get their stake back; winners
-        // lose their winnings but keep their stake).
-        const wallet = await tx.wallet.findUnique({ where: { bettorId: bet.bettorId } });
-        if (wallet) {
-          await tx.wallet.update({
-            where: { bettorId: bet.bettorId },
-            data: { availableCentimes: wallet.availableCentimes + bet.stakeCentimes },
-          });
-          await tx.ledgerEntry.create({
-            data: {
-              bettorId: bet.bettorId,
-              amountCentimes: bet.stakeCentimes,
-              type: "BET_REFUND",
-              referenceType: "bet_order",
-              referenceId: bet.id,
-              balanceAfterCentimes: wallet.availableCentimes + wallet.reservedCentimes + bet.stakeCentimes,
-              metadata: JSON.stringify({ action: "refund_cancelled_event", marketId, eventId: event.id }),
-            },
-          });
-        }
-        await tx.betOrder.update({
-          where: { id: bet.id },
-          data: {
-            status: "MARKET_CANCELLED",
-            settledAt: new Date(),
-            settleOutcome: "REFUND",
-            payoutCentimes: bet.stakeCentimes,
-          },
-        });
-        refundedCount++;
-      }
-
-      // Reopen the market.
-      await tx.bettingMarket.update({
-        where: { id: marketId },
-        data: {
-          status: "OPEN",
-          settleEventId: null,
-          settleOutcome: null,
-          settledAt: null,
-        },
-      });
-
-      return { marketId, outcome: "refunded", refundedCount, reason: "event cancelled, market reopened" };
-    });
-  } catch (e: any) {
-    return { marketId, outcome: "no_action", reason: e?.message };
+  // A post-settlement correction requires reversing the original balanced
+  // payouts (including already-spent winnings and revenue). Crediting stakes
+  // directly would mint funds, so leave the posted ledger intact and require
+  // an audited financial reversal workflow before reopening this market.
+  const market = await db.bettingMarket.findUnique({ where: { id: marketId } });
+  if (!market) return { marketId, outcome: "no_action", reason: "not found" };
+  if (market.settleEventId !== event.id || market.status !== "SETTLED") {
+    return { marketId, outcome: "no_action", reason: "settled market changed; reconciliation required" };
   }
+  await db.bettingAuditLog.create({
+    data: {
+      actorType: "system",
+      action: "settlement.correction.requires_reversal",
+      targetType: "market",
+      targetId: marketId,
+      reason: `Official event ${event.id} was cancelled after settlement; ledger reversal required before reopening.`,
+      afterState: JSON.stringify({ eventId: event.id, marketStatus: market.status }),
+    },
+  });
+  return { marketId, outcome: "no_action", reason: "settled event was cancelled; audited financial reversal required" };
 }
 
 /**
@@ -518,6 +465,12 @@ export async function cancelMarket(marketId: string, reason: string): Promise<Se
         return { marketId, outcome: "no_action", reason: `already ${market.status}` };
       }
 
+      const lockedMarket = await tx.bettingMarket.updateMany({
+        where: { id: marketId, status: market.status },
+        data: { status: market.status },
+      });
+      if (lockedMarket.count !== 1) return { marketId, outcome: "no_action", reason: "market changed concurrently" };
+
       await tx.bettingMarket.update({
         where: { id: marketId },
         data: {
@@ -532,62 +485,25 @@ export async function cancelMarket(marketId: string, reason: string): Promise<Se
         where: { marketId, status: "MATCHED" },
       });
       const openBets = await tx.betOrder.findMany({
-        where: { marketId, status: "OPEN" },
+        where: { marketId, status: { in: ["OPEN", "RESERVED"] } },
       });
 
       let refundedCount = 0;
       for (const bet of matchedBets) {
+        await refundBet(bet.bettorId, bet.stakeCentimes, bet.id, marketId, tx);
         await tx.betOrder.update({
           where: { id: bet.id },
           data: { status: "MARKET_CANCELLED", settledAt: new Date(), settleOutcome: "REFUND", payoutCentimes: bet.stakeCentimes },
         });
-        const wallet = await tx.wallet.findUnique({ where: { bettorId: bet.bettorId } });
-        if (wallet) {
-          await tx.wallet.update({
-            where: { bettorId: bet.bettorId },
-            data: { availableCentimes: wallet.availableCentimes + bet.stakeCentimes },
-          });
-          await tx.ledgerEntry.create({
-            data: {
-              bettorId: bet.bettorId,
-              amountCentimes: bet.stakeCentimes,
-              type: "BET_REFUND",
-              referenceType: "bet_order",
-              referenceId: bet.id,
-              balanceAfterCentimes: wallet.availableCentimes + wallet.reservedCentimes + bet.stakeCentimes,
-              metadata: JSON.stringify({ action: "refund_market_cancel", marketId, reason }),
-            },
-          });
-        }
         refundedCount++;
       }
 
       for (const bet of openBets) {
+        await releaseFromBet(bet.bettorId, bet.stakeCentimes, bet.id, tx);
         await tx.betOrder.update({
           where: { id: bet.id },
           data: { status: "CANCELLED" },
         });
-        const wallet = await tx.wallet.findUnique({ where: { bettorId: bet.bettorId } });
-        if (wallet) {
-          await tx.wallet.update({
-            where: { bettorId: bet.bettorId },
-            data: {
-              availableCentimes: wallet.availableCentimes + bet.stakeCentimes,
-              reservedCentimes: wallet.reservedCentimes - bet.stakeCentimes,
-            },
-          });
-          await tx.ledgerEntry.create({
-            data: {
-              bettorId: bet.bettorId,
-              amountCentimes: bet.stakeCentimes,
-              type: "BET_RELEASE",
-              referenceType: "bet_order",
-              referenceId: bet.id,
-              balanceAfterCentimes: wallet.availableCentimes + wallet.reservedCentimes,
-              metadata: JSON.stringify({ action: "release_market_cancel", marketId, reason }),
-            },
-          });
-        }
       }
 
       return { marketId, outcome: "refunded", refundedCount };

@@ -28,7 +28,8 @@ export async function POST(req: NextRequest) {
   }
 
   // Rate limit.
-  const rl = rateLimit("market_create", role, LIMITS.MARKET_PUB.limit, LIMITS.MARKET_PUB.windowMs);
+  const rl = await rateLimit("market_create", role, LIMITS.MARKET_PUB.limit, LIMITS.MARKET_PUB.windowMs);
+  if (!rl.available) return NextResponse.json({ error: "Sèvis la pa disponib kounye a." }, { status: 503 });
   if (!rl.allowed) {
     return NextResponse.json({ error: "Trop demann." }, { status: 429 });
   }

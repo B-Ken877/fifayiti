@@ -11,6 +11,7 @@ const NORMAL_BALANCE: Record<string, "DEBIT" | "CREDIT"> = {
   platform_custody: "DEBIT",
   platform_revenue: "CREDIT",
   platform_settlement: "DEBIT",
+  platform_betting_pool: "CREDIT",
   bettor_available: "CREDIT",
   bettor_reserved: "CREDIT",
   team_support: "CREDIT",
@@ -23,16 +24,16 @@ async function getOrCreateAccount(opts: {
   teamId?: string;
   playerId?: string;
   currency?: string;
-}): Promise<any> {
+}, client: any = db): Promise<any> {
   const where: any = { type: opts.type };
   if (opts.bettorId) where.bettorId = opts.bettorId;
   if (opts.teamId) where.teamId = opts.teamId;
   if (opts.playerId) where.playerId = opts.playerId;
 
-  let account = await db.account.findFirst({ where });
+  let account = await client.account.findFirst({ where });
   if (!account) {
     try {
-      account = await db.account.create({
+      account = await client.account.create({
         data: {
           type: opts.type,
           normalBalance: NORMAL_BALANCE[opts.type] ?? "CREDIT",
@@ -43,34 +44,38 @@ async function getOrCreateAccount(opts: {
         },
       });
     } catch {
-      account = await db.account.findFirst({ where });
+      account = await client.account.findFirst({ where });
     }
   }
   return account;
 }
 
-export async function getOrCreateTeamAccount(teamId: string) {
-  return getOrCreateAccount({ type: "team_support", teamId });
+export async function getOrCreateTeamAccount(teamId: string, client?: any) {
+  return getOrCreateAccount({ type: "team_support", teamId }, client);
 }
 
-export async function getOrCreatePlayerAccount(playerId: string) {
-  return getOrCreateAccount({ type: "player_earnings", playerId });
+export async function getOrCreatePlayerAccount(playerId: string, client?: any) {
+  return getOrCreateAccount({ type: "player_earnings", playerId }, client);
 }
 
-export async function getOrCreateBettorAvailableAccount(bettorId: string) {
-  return getOrCreateAccount({ type: "bettor_available", bettorId });
+export async function getOrCreateBettorAvailableAccount(bettorId: string, client?: any) {
+  return getOrCreateAccount({ type: "bettor_available", bettorId }, client);
 }
 
-export async function getOrCreateBettorReservedAccount(bettorId: string) {
-  return getOrCreateAccount({ type: "bettor_reserved", bettorId });
+export async function getOrCreateBettorReservedAccount(bettorId: string, client?: any) {
+  return getOrCreateAccount({ type: "bettor_reserved", bettorId }, client);
 }
 
-export async function getOrCreateCustodyAccount() {
-  return getOrCreateAccount({ type: "platform_custody" });
+export async function getOrCreateCustodyAccount(client?: any) {
+  return getOrCreateAccount({ type: "platform_custody" }, client);
 }
 
-export async function getOrCreateRevenueAccount() {
-  return getOrCreateAccount({ type: "platform_revenue" });
+export async function getOrCreateRevenueAccount(client?: any) {
+  return getOrCreateAccount({ type: "platform_revenue" }, client);
+}
+
+export async function getOrCreateBettingPoolAccount(client?: any) {
+  return getOrCreateAccount({ type: "platform_betting_pool" }, client);
 }
 
 export async function getTeamSupportBalance(teamId: string): Promise<bigint> {

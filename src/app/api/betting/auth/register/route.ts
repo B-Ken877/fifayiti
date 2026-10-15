@@ -36,7 +36,8 @@ function isStrongPassword(pw: string): { ok: boolean; reason?: string } {
 export async function POST(req: NextRequest) {
   // Rate limit: 5 registrations per hour per IP.
   const ip = clientIp(req);
-  const rl = rateLimit("register", ip, LIMITS.REGISTER.limit, LIMITS.REGISTER.windowMs);
+  const rl = await rateLimit("register", ip, LIMITS.REGISTER.limit, LIMITS.REGISTER.windowMs);
+  if (!rl.available) return NextResponse.json({ error: "Sèvis la pa disponib kounye a." }, { status: 503 });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Trop demann enskripsyon. Eseye ankò pita." },
@@ -45,15 +46,27 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    if (Number(req.headers.get("content-length") ?? 0) > 16 * 1024) {
+      return NextResponse.json({ error: "Done demann lan twò gwo." }, { status: 413 });
+    }
     const body = await req.json();
     const { email, password, displayName, phone } = body;
 
-    if (!email || !password) {
+    if (typeof email !== "string" || typeof password !== "string" || !email || !password) {
       return NextResponse.json({ error: "Imèl ak modpas nesesè." }, { status: 400 });
     }
     const emailNorm = email.toLowerCase().trim();
-    if (!emailNorm.includes("@") || emailNorm.length > 254) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm) || emailNorm.length > 254) {
       return NextResponse.json({ error: "Imèl la pa valid." }, { status: 400 });
+    }
+    if (password.length > 256) {
+      return NextResponse.json({ error: "Modpas la twò long." }, { status: 400 });
+    }
+    if (displayName != null && (typeof displayName !== "string" || displayName.length > 80)) {
+      return NextResponse.json({ error: "Non an dwe gen 80 karaktè oswa mwens." }, { status: 400 });
+    }
+    if (phone != null && (typeof phone !== "string" || phone.length > 32)) {
+      return NextResponse.json({ error: "Nimewo telefòn nan pa valab." }, { status: 400 });
     }
 
     const pwCheck = isStrongPassword(password);
@@ -135,6 +148,7 @@ export async function POST(req: NextRequest) {
         { status: 503 },
       );
     }
-    return NextResponse.json({ error: e?.message ?? "Erè sèvè." }, { status: 500 });
+    console.error("[betting/register] request failed:", e?.message);
+    return NextResponse.json({ error: "Erè sèvè. Eseye ankò pita." }, { status: 500 });
   }
 }

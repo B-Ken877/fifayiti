@@ -27,6 +27,7 @@ interface SupportStats {
 const SUPPORT_AMOUNTS = [25, 50, 100, 250, 500];
 
 export function TeamSupportSection({ teamId }: { teamId: string }) {
+  const demoPaymentsEnabled = process.env.NODE_ENV !== "production";
   const [stats, setStats] = useState<SupportStats | null>(null);
   const [selectedAmount, setSelectedAmount] = useState<number>(100);
   const [donating, setDonating] = useState(false);
@@ -59,6 +60,10 @@ export function TeamSupportSection({ teamId }: { teamId: string }) {
       });
       const data = await res.json();
       if (res.ok) {
+        if (data.redirectUrl) {
+          window.location.assign(data.redirectUrl);
+          return;
+        }
         setToast({ type: "success", msg: "Sipò ou anrejistre! Mèsi." });
         setTimeout(() => setToast(null), 4000);
         load();
@@ -127,7 +132,7 @@ export function TeamSupportSection({ teamId }: { teamId: string }) {
         {/* Support button */}
         <button
           onClick={donate}
-          disabled={donating}
+          disabled={donating || !demoPaymentsEnabled}
           className="w-full py-3 rounded-xl bg-[#D92D20] text-white font-bold text-sm hover:brightness-105 transition flex items-center justify-center gap-2 disabled:opacity-50"
         >
           {donating ? (
@@ -136,6 +141,11 @@ export function TeamSupportSection({ teamId }: { teamId: string }) {
             <><Heart size={15} fill="white" /> SIPÒTE {selectedAmount} HTG</>
           )}
         </button>
+        {!demoPaymentsEnabled && (
+          <p className="mt-2 text-[10px] text-center text-[#667085]">
+            Donasyon sou entènèt pa disponib kounye a.
+          </p>
+        )}
 
         {process.env.NODE_ENV !== "production" && (
           <p className="text-[9px] text-[#667085] text-center mt-2">

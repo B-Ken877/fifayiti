@@ -1,11 +1,7 @@
 // FIFAYITI — rate limiting.
 //
-// Sliding-window in-memory rate limiter. Each Vercel lambda has its own
-// counter (serverless = no shared process state), so this is a SOFT limit
-// that approximates per-IP/per-user throttling. For hard production
-// guarantees, swap the `BucketStore` implementation for Upstash Redis
-// (see `createUpstashStore` stub at the bottom — wiring is a config change,
-// not a code change).
+// Fixed-window rate limiter. Local development uses memory; production uses
+// an atomic Upstash Redis counter shared by every serverless instance.
 //
 // CURRENT LIMITS (configurable):
 //   - login:           10 / min per IP + email combo   (brute-force protection)
@@ -16,6 +12,8 @@
 //   - market publish:  10 / min per operator
 //   - event create:    30 / min per operator          (live events are frequent)
 //   - emergency susp:   2 / min per operator          (kill switch — rare)
+
+import { createHash } from "crypto";
 
 interface Bucket { count: number; windowStart: number; }
 interface BucketStore {
@@ -59,9 +57,41 @@ export function rateLimit(
   identifier: string,
   limit: number,
   windowMs: number,
-): { allowed: boolean; remaining: number; resetMs: number } {
+): Promise<{ allowed: boolean; remaining: number; resetMs: number; available: boolean }> {
   const key = `${scope}:${identifier}`;
-  return store().hit(key, limit, windowMs);
+  if (process.env.NODE_ENV !== "production") {
+    return Promise.resolve({ ...store().hit(key, limit, windowMs), available: true });
+  }
+
+  const redisUrl = process.env.UPSTASH_REDIS_REST_URL?.replace(/\/$/, "");
+  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!redisUrl || !redisToken || !redisUrl.startsWith("https://")) {
+    return Promise.resolve({ allowed: false, remaining: 0, resetMs: windowMs, available: false });
+  }
+
+  const script = "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('PEXPIRE',KEYS[1],ARGV[1]); end; return n";
+  return fetch(redisUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${redisToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify([
+      "EVAL", script, "1",
+      `fifayiti:ratelimit:${createHash("sha256").update(key).digest("hex")}`,
+      String(windowMs),
+    ]),
+    cache: "no-store",
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`rate-limit store returned ${response.status}`);
+    const payload = await response.json();
+    const count = Number(payload?.result);
+    if (!Number.isSafeInteger(count) || count < 1) throw new Error("invalid rate-limit response");
+    return { allowed: count <= limit, remaining: Math.max(0, limit - count), resetMs: windowMs, available: true };
+  }).catch((error) => {
+    console.error("[rate-limit] shared store unavailable:", error?.message);
+    return { allowed: false, remaining: 0, resetMs: windowMs, available: false };
+  });
 }
 
 // ── Pre-configured limit presets ──────────────────────────────────────
@@ -94,15 +124,5 @@ export function rateLimitedResponse(resetMs: number) {
   };
 }
 
-// ── Production: Upstash Redis store (stub) ────────────────────────────
-// To wire this for hard production limits, set UPSTASH_REDIS_REST_URL +
-// UPSTASH_REDIS_REST_TOKEN env vars and replace `MemoryStore` with:
-//
-//   import { Ratelimit } from "@upstash/ratelimit";
-//   import { Redis } from "@upstash/redis";
-//   const redis = Redis.fromEnv();
-//   const ratelimit = new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(limit, window), prefix: scope });
-//
-// Then `rateLimit` becomes: `const { success, remaining, reset } = await ratelimit.limit(key);`
-// The call sites below already return promises via the helper, so the
-// change is a one-line swap inside this file.
+// Production requires UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.
+// Requests fail closed with a 503 if the shared limiter is not available.

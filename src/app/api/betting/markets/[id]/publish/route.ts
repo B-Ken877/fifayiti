@@ -22,7 +22,8 @@ export async function POST(
     );
   }
 
-  const rl = rateLimit("market_publish", role, LIMITS.MARKET_PUB.limit, LIMITS.MARKET_PUB.windowMs);
+  const rl = await rateLimit("market_publish", role, LIMITS.MARKET_PUB.limit, LIMITS.MARKET_PUB.windowMs);
+  if (!rl.available) return NextResponse.json({ error: "Sèvis la pa disponib kounye a." }, { status: 503 });
   if (!rl.allowed) {
     return NextResponse.json({ error: "Trop demann." }, { status: 429 });
   }

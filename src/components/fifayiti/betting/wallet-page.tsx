@@ -4,14 +4,12 @@
 // Shows balance, in-play, transaction history, deposit/withdraw buttons.
 
 import { useEffect, useState, useCallback } from "react";
-import { useAppStore } from "@/store/app-store";
 import {
-  ArrowLeft, Wallet, ArrowDownToLine, ArrowUpFromLine,
+  Wallet, ArrowDownToLine, ArrowUpFromLine,
   TrendingUp, Clock, Check, X, Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatHtg, formatHtgPrecise } from "@/lib/betting/types";
-import { BrandMark } from "../brand-mark";
 
 interface WalletData {
   available: string;
@@ -42,17 +40,12 @@ const TYPE_LABELS: Record<string, { label: string; color: string; sign: "+" | "-
 };
 
 export function WalletPage() {
-  const { setView } = useAppStore();
   const [wallet, setWallet] = useState<WalletData | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [depositOpen, setDepositOpen] = useState(false);
   const [depositAmt, setDepositAmt] = useState("");
   const [depositing, setDepositing] = useState(false);
-  const [withdrawOpen, setWithdrawOpen] = useState(false);
-  const [withdrawAmt, setWithdrawAmt] = useState("");
-  const [withdrawPhone, setWithdrawPhone] = useState("");
-  const [withdrawing, setWithdrawing] = useState(false);
   const [withdrawToast, setWithdrawToast] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -101,34 +94,6 @@ export function WalletPage() {
     } finally { setDepositing(false); }
   };
 
-  // ── Withdraw (placeholder — MonCash/Natcash integration is stubbed) ──
-  // The UI collects the amount + phone number + method, then shows a
-  // "pending" toast. Real integration will POST to /api/betting/wallet/withdraw
-  // once the payment gateway is wired.
-  const handleWithdraw = async (method: "moncash" | "natcash") => {
-    const centimes = BigInt(Math.round(parseFloat(withdrawAmt) * 100));
-    if (centimes <= 0n) return;
-    if (!withdrawPhone.trim()) {
-      setWithdrawToast("Antre nimewo telefòn ou.");
-      setTimeout(() => setWithdrawToast(null), 3000);
-      return;
-    }
-    if (wallet && BigInt(wallet.available) < centimes) {
-      setWithdrawToast("Solde disponib ou pa ase.");
-      setTimeout(() => setWithdrawToast(null), 3000);
-      return;
-    }
-    setWithdrawing(true);
-    // Simulate a payment gateway call (placeholder).
-    await new Promise((r) => setTimeout(r, 1200));
-    setWithdrawing(false);
-    setWithdrawOpen(false);
-    setWithdrawToast(`Demand retrè ${formatHtg(centimes)} via ${method === "moncash" ? "MonCash" : "Natcash"} anrejistre. N ap trete li nan 24 èdtan.`);
-    setTimeout(() => setWithdrawToast(null), 5000);
-    setWithdrawAmt("");
-    setWithdrawPhone("");
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-[#064E2A] flex items-center justify-center">
@@ -138,34 +103,8 @@ export function WalletPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#064E2A] pb-20">
-      {/* ═══ HEADER — normal FIFAYITI header + PARIAJ label (no tagline) ═══ */}
-      <div className="sticky top-0 z-30 bg-[#084C2A] text-white border-b border-fifayiti-line">
-        <div className="max-w-[1400px] mx-auto px-4 lg:px-6">
-          <div className="flex items-center justify-between" style={{ height: 60 }}>
-            <button
-              onClick={() => setView("betting")}
-              className="flex items-center cursor-pointer text-left"
-              aria-label="FIFAYITI PARIAJ"
-            >
-              <BrandMark size="compact" variant="white" showTagline={false} />
-              <span
-                className="ml-2 font-extrabold tracking-tight"
-                style={{
-                  fontSize: 18,
-                  color: "#F4C400",
-                  letterSpacing: "-0.02em",
-                  fontFamily: "var(--font-archivo), var(--font-manrope), sans-serif",
-                }}
-              >
-                PARIAJ
-              </span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-[600px] mx-auto px-4 pt-4 space-y-4">
+    <div className="min-h-screen bg-[#F3F6F4] pb-20">
+      <div className="max-w-[600px] mx-auto px-4 py-6 space-y-4">
         {/* ═══ BALANCE CARD — professional, serious, like a real wallet ═══ */}
         <div className="rounded-xl bg-white shadow-sm border border-[#E4E7EC] overflow-hidden">
           {/* Card header */}
@@ -209,22 +148,26 @@ export function WalletPage() {
           <div className="grid grid-cols-2 border-t border-[#E4E7EC]">
             <button
               onClick={() => setDepositOpen(true)}
-              className="py-3 text-sm font-bold text-[#064E2A] hover:bg-[#F8F9FA] transition flex items-center justify-center gap-1.5 border-r border-[#E4E7EC]"
+              disabled={process.env.NODE_ENV === "production"}
+              title={process.env.NODE_ENV === "production" ? "Depo pa disponib kounye a" : undefined}
+              className="py-3 text-sm font-bold text-[#064E2A] hover:bg-[#F8F9FA] transition flex items-center justify-center gap-1.5 border-r border-[#E4E7EC] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ArrowDownToLine size={14} /> Depoze
             </button>
             <button
-              onClick={() => setWithdrawOpen(true)}
-              className="py-3 text-sm font-bold text-[#101828] hover:bg-[#F8F9FA] transition flex items-center justify-center gap-1.5"
+              type="button"
+              disabled
+              title="Retrè poko disponib"
+              className="py-3 text-sm font-bold text-[#667085] flex items-center justify-center gap-1.5 opacity-60 cursor-not-allowed"
             >
-              <ArrowUpFromLine size={14} /> Retire
+              <ArrowUpFromLine size={14} /> Retrè pa disponib
             </button>
           </div>
         </div>
 
         {/* Notice — subtle, not playful */}
-        <p className="text-[10px] text-white/40 text-center -mt-1">
-          MonCash ak Natcash ap konfigire. Pou kounye a, depo/retrè se pou tès sèlman.
+        <p className="text-[11px] text-[#667085] text-center -mt-1">
+          Retrè poko disponib. MonCash ak Natcash pa aktive pou depo reyèl.
         </p>
 
         {/* ═══ DEPOSIT MODAL ═══ */}
@@ -319,88 +262,6 @@ export function WalletPage() {
 
               <button
                 onClick={() => setDepositOpen(false)}
-                className="w-full py-2.5 rounded-lg bg-[#F8F9FA] text-[#101828] font-bold text-sm hover:bg-[#F0F2F5] transition"
-              >
-                Anile
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ═══ WITHDRAW MODAL ═══ */}
-        {withdrawOpen && (
-          <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setWithdrawOpen(false)}>
-            <div className="bg-white rounded-2xl p-5 max-w-sm w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-base font-bold text-[#101828]">Retire lajan</h3>
-                <button onClick={() => setWithdrawOpen(false)} className="p-1 rounded-lg hover:bg-[#F8F9FA]">
-                  <X size={16} className="text-[#667085]" />
-                </button>
-              </div>
-
-              {/* Amount input */}
-              <p className="text-[10px] font-bold text-[#667085] uppercase mb-1.5">Montan</p>
-              <input
-                type="number"
-                value={withdrawAmt}
-                onChange={(e) => setWithdrawAmt(e.target.value)}
-                placeholder="500"
-                className="w-full px-3 py-2.5 rounded-lg border border-[#E4E7EC] text-lg font-bold text-[#101828] focus:outline-none focus:border-[#F4C400] mb-2"
-              />
-              <p className="text-[10px] text-[#667085] mb-3">
-                Disponib: {formatHtg(wallet?.available ?? "0")}
-              </p>
-
-              {/* Phone number */}
-              <p className="text-[10px] font-bold text-[#667085] uppercase mb-1.5">Nimewo telefòn</p>
-              <input
-                type="tel"
-                value={withdrawPhone}
-                onChange={(e) => setWithdrawPhone(e.target.value)}
-                placeholder="+509 3xxx xxxx"
-                className="w-full px-3 py-2.5 rounded-lg border border-[#E4E7EC] text-sm font-medium text-[#101828] focus:outline-none focus:border-[#F4C400] mb-4"
-              />
-
-              {/* Payment methods */}
-              <p className="text-[10px] font-bold text-[#667085] uppercase mb-2">Metòd retrè</p>
-              <div className="space-y-2 mb-4">
-                <button
-                  onClick={() => handleWithdraw("moncash")}
-                  disabled={withdrawing || !withdrawAmt}
-                  className="w-full flex items-center gap-3 p-3 rounded-xl border-2 border-[#E4E7EC] hover:border-[#F4C400] transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#FF6B35] to-[#E55A2B] flex items-center justify-center shrink-0">
-                    <span className="text-white font-black text-xs">M</span>
-                  </div>
-                  <div className="flex-1 text-left">
-                    <p className="text-sm font-bold text-[#101828]">MonCash</p>
-                    <p className="text-[10px] text-[#667085]">Retrè nan 24è — Digitel</p>
-                  </div>
-                  {withdrawing && <Loader2 size={14} className="text-[#667085] animate-spin" />}
-                </button>
-
-                <button
-                  onClick={() => handleWithdraw("natcash")}
-                  disabled={withdrawing || !withdrawAmt}
-                  className="w-full flex items-center gap-3 p-3 rounded-xl border-2 border-[#E4E7EC] hover:border-[#F4C400] transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#0066B3] to-[#005299] flex items-center justify-center shrink-0">
-                    <span className="text-white font-black text-xs">N</span>
-                  </div>
-                  <div className="flex-1 text-left">
-                    <p className="text-sm font-bold text-[#101828]">Natcash</p>
-                    <p className="text-[10px] text-[#667085]">Retrè nan 24è — Natcom</p>
-                  </div>
-                  {withdrawing && <Loader2 size={14} className="text-[#667085] animate-spin" />}
-                </button>
-              </div>
-
-              <p className="text-[9px] text-[#667085] text-center mb-3">
-                ⚠️ MonCash ak Natcash yo ap konfigire. Demand ou ap anrejistre pou tès.
-              </p>
-
-              <button
-                onClick={() => setWithdrawOpen(false)}
                 className="w-full py-2.5 rounded-lg bg-[#F8F9FA] text-[#101828] font-bold text-sm hover:bg-[#F0F2F5] transition"
               >
                 Anile

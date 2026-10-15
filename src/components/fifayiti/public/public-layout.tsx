@@ -25,15 +25,16 @@ export function PublicLayout() {
     return null;
   }
 
-  // Betting views render full-screen with the bottom nav always visible
-  // (no public header/footer — betting has its own chrome, but the bottom
-  // nav is the primary navigation so it MUST stay).
+  // Keep the public site navigation visible while betting and wallet views
+  // are open so Pariaj feels like part of FIFAYITI rather than a separate app.
   // Exception: the auth page is a focused flow (login/register) — hide
   // the bottom nav there so the user isn't distracted mid-flow.
   if (view === "betting" || view === "betting-wallet" || view === "betting-login" || view === "betting-operator") {
     const showNav = view !== "betting-login";
+    const showPublicHeader = view === "betting" || view === "betting-wallet";
     return (
-      <div className="min-h-screen flex flex-col">
+      <div className="min-h-screen flex flex-col bg-white">
+        {showPublicHeader && <PublicHeader />}
         <main className={cn("flex-1", showNav && "pb-24 md:pb-0")}>
           {view === "betting" && <BettingPage />}
           {view === "betting-wallet" && <WalletPage />}
