@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { pushBroadcastMatchUpdate } from "@/lib/streaming/broadcast-state";
+import { getBroadcastAdapter } from "@/lib/streaming/broadcast-adapter";
 
 /**
  * POST /api/matches/[id]/phase
@@ -87,6 +87,13 @@ export async function POST(
     // clockDelta — the push function reads the CURRENT clock from LiveKit
     // metadata (shared across all lambdas) and adds 1. The clock advances
     // monotonically regardless of which lambda handles the tick.
+    //
+    // PHASE 1 CHANGE (spec Phase 1.5): the call is now fire-and-forget
+    // through the optional broadcast adapter. A slow / failing LiveKit
+    // API no longer delays the operator's tick response (the clock tick
+    // was the worst-case coupling — called every second). Failures are
+    // logged but never abort the phase update (which is already persisted
+    // to the DB above).
     const pushOpts: any = {};
     switch (action) {
       case "start":
@@ -111,7 +118,22 @@ export async function POST(
         pushOpts.clockDelta = 1;
         break;
     }
-    await pushBroadcastMatchUpdate(id, pushOpts).catch(() => {});
+    void getBroadcastAdapter()
+      .publishMatchUpdate({ matchId: id, ...pushOpts })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            component: "phase-route",
+            action: "broadcast.publishMatchUpdate",
+            outcome: "failed",
+            nonFatal: true,
+            matchId: id,
+            reason: msg,
+          }),
+        );
+      });
 
     return NextResponse.json({ match: updated });
   } catch (e: any) {

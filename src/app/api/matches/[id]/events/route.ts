@@ -33,11 +33,30 @@ import {
   isValidEventType,
 } from "@/lib/auth/permissions";
 import { rateLimit, LIMITS, clientIp } from "@/lib/rate-limit";
-import { pushBroadcastMatchUpdate } from "@/lib/streaming/broadcast-state";
-import { triggerBroadcastReplay } from "@/lib/streaming/replay-engine";
+import { getBroadcastAdapter } from "@/lib/streaming/broadcast-adapter";
 import { onOfficialEventConfirmed } from "@/lib/betting/settlement-engine";
 
 const HALF_LENGTH_SECONDS = 30 * 60;
+
+/**
+ * Structured logger for non-fatal broadcast failures (spec Phase 1.5).
+ * Match state was already persisted durably before these calls — a
+ * broadcast failure must not abort the response, but it must be visible
+ * to operators so they know whether the TV feed is stale.
+ */
+function logBroadcastFailure(action: string, err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      component: "events-route",
+      action: `broadcast.${action}`,
+      outcome: "failed",
+      nonFatal: true,
+      reason: msg,
+    }),
+  );
+}
 
 export async function POST(
   req: NextRequest,
@@ -242,31 +261,62 @@ export async function POST(
       },
     });
 
-    // ── 11. DOWNSTREAM (awaited so Vercel doesn't freeze the lambda) ──
-    // LiveKit push (scorebug + clock) — best-effort, never blocks.
-    await pushBroadcastMatchUpdate(id, {
-      forceClock: updatedMatch.clock ?? 0,
-      forceHalf: updatedMatch.half,
-      forceStatus: updatedMatch.status,
-    }).catch(() => {});
+    // ── 11. DOWNSTREAM (fire-and-forget broadcast; awaited settlement) ─
+    // Broadcast push (scorebug + clock) — fire-and-forget through the
+    // optional broadcast adapter (spec Phase 1.2 + 1.5).
+    //
+    // The `void` + `.catch()` pattern means the HTTP response is returned
+    // BEFORE the LiveKit API call completes (or fails). Match state was
+    // already persisted durably above — broadcast is best-effort and its
+    // failures are logged but never abort the official event.
+    void getBroadcastAdapter()
+      .publishMatchUpdate({
+        matchId: id,
+        forceClock: updatedMatch.clock ?? 0,
+        forceHalf: updatedMatch.half,
+        forceStatus: updatedMatch.status,
+      })
+      .catch((err) => logBroadcastFailure("publishMatchUpdate", err));
 
-    // Instant replay for eligible kinds — best-effort.
+    // Instant replay for eligible kinds — fire-and-forget through the
+    // optional broadcast adapter. Same rationale: a replay failure must
+    // never invalidate a recorded goal.
     const REPLAY_KINDS = ["GOL", "FOT", "KAT_JON", "KAT_WOUJ"];
     if (REPLAY_KINDS.includes(body.kind)) {
-      await triggerBroadcastReplay({
-        kind: body.kind,
-        matchId: id,
-        eventId: event.ev.id,
-        teamId: body.teamId ?? null,
-        playerInId: body.playerInId ?? null,
-        description: body.description ?? "",
-        minute,
-      }).catch(() => {});
+      void getBroadcastAdapter()
+        .requestReplay({
+          kind: body.kind,
+          matchId: id,
+          eventId: event.ev.id,
+          teamId: body.teamId ?? null,
+          playerInId: body.playerInId ?? null,
+          description: body.description ?? "",
+          minute,
+        })
+        .catch((err) => logBroadcastFailure("requestReplay", err));
     }
 
     // Settlement engine — fires on confirmed official events. Idempotent
-    // (the SettlementTransaction unique constraint guarantees no double settlement).
-    await onOfficialEventConfirmed(event.official.id).catch(() => {});
+    // (the SettlementTransaction unique constraint guarantees no double
+    // settlement). Unlike broadcast, settlement is `await`ed: settlement
+    // is a fast in-process DB transaction and the OutboxEvent row is the
+    // durable retry surface, so if this call throws, the route still
+    // returns 201 (caught below) and the outbox row remains pending.
+    await onOfficialEventConfirmed(event.official.id).catch((err) => {
+      // Settlement failures are rare and serious — log at error level
+      // but still don't block the operator's response.
+      console.error(
+        JSON.stringify({
+          level: "error",
+          component: "events-route",
+          action: "settlement",
+          outcome: "failed",
+          nonFatal: true,
+          officialEventId: event.official.id,
+          reason: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    });
 
     return NextResponse.json({ event: event.ev, match: updatedMatch }, { status: 201 });
   } catch (e: any) {

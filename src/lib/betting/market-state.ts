@@ -25,7 +25,18 @@ import {
 } from "@/lib/streaming/livekit-config";
 import { logBettingAction } from "./audit";
 
-const roomService = new RoomServiceClient(LIVEKIT_URL, API_KEY, API_SECRET);
+// LAZY CONSTRUCTION (spec Phase 1.4):
+//   Deferring the RoomServiceClient construction to first use means
+//   importing this module (transitively, the betting markets + bets
+//   routes) never throws if the LiveKit client cannot be built. Betting
+//   operations continue to work with the video stack unavailable.
+let _roomService: RoomServiceClient | null = null;
+function getRoomService(): RoomServiceClient {
+  if (_roomService) return _roomService;
+  _roomService = new RoomServiceClient(LIVEKIT_URL, API_KEY, API_SECRET);
+  return _roomService;
+}
+
 const ROOM_NAME = "fifayiti-broadcast";
 
 /**
@@ -148,7 +159,7 @@ export async function pushMarketState(marketId: string) {
     if (!market) return;
 
     // Read the current room metadata.
-    const rooms = await roomService.listRooms();
+    const rooms = await getRoomService().listRooms();
     const room = rooms.find((r: any) => r.name === ROOM_NAME);
     if (!room) return; // no room yet — bettors will get it when they connect
 
@@ -172,10 +183,10 @@ export async function pushMarketState(marketId: string) {
       openedAt: market.openedAt?.toISOString() ?? null,
     };
 
-    await roomService.updateRoomMetadata(ROOM_NAME, JSON.stringify(metadata));
+    await getRoomService().updateRoomMetadata(ROOM_NAME, JSON.stringify(metadata));
 
     // Also broadcast a data-channel message for immediate UI updates.
-    await roomService.sendData(
+    await getRoomService().sendData(
       ROOM_NAME,
       new TextEncoder().encode(JSON.stringify({
         type: "market-update",
@@ -194,7 +205,7 @@ export async function pushMarketState(marketId: string) {
  */
 export async function clearActiveMarket() {
   try {
-    const rooms = await roomService.listRooms();
+    const rooms = await getRoomService().listRooms();
     const room = rooms.find((r: any) => r.name === ROOM_NAME);
     if (!room) return;
 
@@ -202,7 +213,7 @@ export async function clearActiveMarket() {
     try { metadata = JSON.parse(room.metadata || "{}"); } catch {}
     delete metadata.activeMarket;
 
-    await roomService.updateRoomMetadata(ROOM_NAME, JSON.stringify(metadata));
+    await getRoomService().updateRoomMetadata(ROOM_NAME, JSON.stringify(metadata));
   } catch {}
 }
 
@@ -211,7 +222,7 @@ export async function clearActiveMarket() {
  */
 export async function broadcastBetMatch(bettorId: string, betOrderId: string, marketId: string) {
   try {
-    await roomService.sendData(
+    await getRoomService().sendData(
       ROOM_NAME,
       new TextEncoder().encode(JSON.stringify({
         type: "bet-matched",
@@ -229,7 +240,7 @@ export async function broadcastBetMatch(bettorId: string, betOrderId: string, ma
  */
 export async function broadcastSettlement(marketId: string, winningKey: string | null) {
   try {
-    await roomService.sendData(
+    await getRoomService().sendData(
       ROOM_NAME,
       new TextEncoder().encode(JSON.stringify({
         type: "market-settled",
